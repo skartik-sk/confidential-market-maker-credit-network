@@ -1,0 +1,53 @@
+{
+  "cluster": "surfpool",
+  "rpcUrl": "http://127.0.0.1:8899",
+  "clusterVersion": "3.0.6",
+  "programId": "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5",
+  "programDataAddress": "Fc6voMMtS9uYM1grofiNEKpJwnuUJcby2qcLMYyVtFDy",
+  "authority": "ALH8UD28X24qwGvG2kpTcogg3Wpvu31FrErpLU8vw6oT",
+  "lastDeployedInSlot": 464894048,
+  "dataLengthBytes": 28752,
+  "deploySignature": "5nwzTRAEFGpnQNkHp46ryBdW4iZ9gPWW9X37KsvLbrafqL1jjyCmb8bDEifzihLwU5QfcbRfASWa9vH8orVtCixe",
+  "soSha256": "d9fa76c7e8dabc1aa55cf39bfee670d1ec82ed16c88fc3a3524f507af6c255e2",
+  "latestSmoke": {
+    "pool": "7UVuJLk2fZSyMVHkfvwMbjrwUJBxQWHd1VyeNrQGwV9V",
+    "line": "CkPSdQurMBEPKrgw66A4tYQq3dRCjtbG9mGASMWtNbaK",
+    "receipt": "5Z7Rj4GaZMqxjaFYSj3EjPEsFArWbNPaERYkqPfpgkLC",
+    "initializePool": "3tAV1aL6J85Vnbs8CU6BDFargCFGdheKPdvKyqgXrvqdc35GJfR6jQnG9ysTksRjYxVhfL3UBsNF7NWyP5443wh5",
+    "approveCreditLine": "3qdLZx9dZUrLh1TNZ7LG6iaiiDB43xCSyFnTD5WghczdjjUStwyRuPCvHKgUAtQ1ANNEx4Y5D3MTHMHxgsmkBH5T",
+    "drawTranche": "zYZnUU8ATZmHUEubjfq4WE4niyUTYfBtQg4KxHgAx5mKtjvrsXTaV4H13cxYjA4Ti8motj5nSKUTcmKGNKPJFv7",
+    "repayTranche": "3Co6SnyBSjktoeRpyRBHKgRcbGgKqnfPBHHPCQaN8hUvSUJkDZ5hmAFLLDW86saQGXdeDZtL2wvUpHn19mXzMfvw",
+    "postReceipt": "2phiXNjLjbgCTJUnSoc6uwH63nfXGoqU4tWhRTej9v4wgQx7c5YkCnF3PqMg2P2g5RSABJZdoYTYvcVRmyVVSaw4",
+    "settleMaturity": "4nf7nVNXu4ymdTRWyAcx54nNTuPhPUzQtoUaQcZGAqihfMxCcvFaD99DzaYkk74EPt7C1fxHqyPdjmz9H3qLykGb",
+    "computeUnits": {
+      "initializePool": 1055,
+      "approveCreditLine": 705,
+      "drawTranche": 578,
+      "repayTranche": 601,
+      "postReceipt": 511,
+      "settleMaturity": 501
+    },
+    "finalPoolSnapshot": {
+      "allocatedLimitNotes": 10,
+      "outstandingNotes": 0,
+      "drawnNotes": 6,
+      "repaidNotes": 2,
+      "defaultedNotes": 4
+    },
+    "finalLineSnapshot": {
+      "status": 4,
+      "limitNotes": 10,
+      "drawnNotes": 6,
+      "repaidNotes": 2,
+      "defaultedNotes": 4,
+      "lastReceiptSlot": 20201
+    }
+  },
+  "commands": [
+    "NO_DNA=1 surfpool start --network devnet --no-tui",
+    "solana cluster-version --url http://127.0.0.1:8899",
+    "solana program deploy --url http://127.0.0.1:8899 --program-id programs/credit-vault/target/deploy/confidential_credit_vault-keypair.json programs/credit-vault/target/deploy/confidential_credit_vault.so",
+    "solana program show --url http://127.0.0.1:8899 G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5",
+    "bun run localnet:smoke"
+  ]
+}

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Confidential Credit Vault</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main class="site-shell">
+      <header class="nav">
+        <a class="brand" href="/" aria-label="Confidential Credit Vault home">
+          <span class="brand-mark"></span>
+          <span>credit-vault</span>
+        </a>
+        <nav aria-label="Site links">
+          <a href="#flow">Flow</a>
+          <a href="#privacy">Privacy</a>
+          <a href="/api/demo/proof">Proof</a>
+          <span id="proof-state" class="state-pill">loading</span>
+        </nav>
+      </header>
+
+      <section class="hero" aria-label="Private market-maker credit with receipt proof">
+        <div class="hero-copy">
+          <span class="release-pill">verified local proof</span>
+          <h1>Credit lines that <span>settle quietly.</span></h1>
+          <p>
+            Confidential operating credit for Solana market makers. Borrowers move through fixed
+            note draws, auditor receipts, and private settlement rails without exposing every input.
+          </p>
+
+          <div class="proof-strip" role="group" aria-label="Live proof summary">
+            <span>active line</span>
+            <strong id="line-id">loading</strong>
+            <button id="hero-run" type="button">Run flow</button>
+          </div>
+
+          <div class="cta-row">
+            <button id="run-flow" class="primary-button" type="button">Run credit flow</button>
+            <a class="secondary-button" href="/api/demo/proof">View proof JSON</a>
+          </div>
+
+          <dl class="hero-stats">
+            <div>
+              <dt>limit</dt>
+              <dd id="limit-notes">--</dd>
+            </div>
+            <div>
+              <dt>drawn</dt>
+              <dd id="drawn-notes">--</dd>
+            </div>
+            <div>
+              <dt>repaid</dt>
+              <dd id="repaid-notes">--</dd>
+            </div>
+            <div>
+              <dt>max CU</dt>
+              <dd id="max-cu">--</dd>
+            </div>
+          </dl>
+        </div>
+
+        <aside class="proof-machine" aria-label="Protocol proof machine">
+          <div class="machine-shell">
+            <div class="machine-top">
+              <span></span><span></span><span></span><span></span>
+              <i></i>
+            </div>
+            <div class="machine-window">
+              <strong>PINOCCHIO VAULT</strong>
+              <em id="cluster-name">surfpool</em>
+            </div>
+            <div class="machine-reels">
+              <div class="reel"></div>
+              <div class="program-tape">
+                <span>program</span>
+                <strong id="program-id">...</strong>
+              </div>
+              <div class="reel reel-small"></div>
+            </div>
+            <dl class="machine-data">
+              <div>
+                <dt>SBF hash</dt>
+                <dd id="sbf-hash">...</dd>
+              </div>
+              <div>
+                <dt>slot</dt>
+                <dd id="deploy-slot">...</dd>
+              </div>
+              <div>
+                <dt>binary</dt>
+                <dd id="binary-size">...</dd>
+              </div>
+            </dl>
+          </div>
+        </aside>
+      </section>
+
+      <section id="flow" class="flow-section">
+        <div class="section-copy">
+          <span>Showcase</span>
+          <h2>Follow the <span>credit path.</span></h2>
+          <p>
+            One line, one borrower, one underwriter, one auditor. Each action produces a bounded
+            state change and a machine-readable receipt.
+          </p>
+        </div>
+
+        <div class="flow-grid">
+          <article class="flow-panel">
+            <div class="panel-head">
+              <span>Automated protocol flow</span>
+              <button id="step-next" type="button">Next step</button>
+            </div>
+            <div id="flow-steps" class="flow-steps"></div>
+          </article>
+
+          <article class="output-panel">
+            <div class="panel-head">
+              <span>Current output</span>
+              <strong id="active-step-index">01</strong>
+            </div>
+            <h3 id="active-step-title">Loading proof</h3>
+            <p id="active-step-summary">Reading local proof data.</p>
+            <dl id="active-step-output" class="output-list"></dl>
+          </article>
+        </div>
+      </section>
+
+      <section id="privacy" class="privacy-section">
+        <div class="section-copy">
+          <span>Privacy</span>
+          <h2>Use the right <span>rail.</span></h2>
+          <p>
+            The vault is the accounting truth. Private movement, encrypted risk checks, and paid
+            machine reports stay cleanly separated so the protocol can ship without leaking strategy.
+          </p>
+        </div>
+
+        <div class="privacy-board">
+          <article class="privacy-note">
+            <span>Settlement stance</span>
+            <h3>Private movement outside, vault truth inside.</h3>
+            <p>
+              The product records commitments and receipts in the vault while privacy rails handle
+              disclosure, movement, and risk at the boundary.
+            </p>
+          </article>
+          <div id="privacy-options" class="privacy-options"></div>
+        </div>
+      </section>
+
+      <section class="close-section" aria-label="Launch surface">
+        <div>
+          <span>Launch path</span>
+          <h2>Private credit, public receipts.</h2>
+          <p>Keep the product clean: signed state transitions, privacy adapters, paid machine APIs.</p>
+        </div>
+        <div class="close-actions">
+          <a class="primary-button" href="/api/demo/protocol">Protocol manifest</a>
+          <a class="secondary-button" href="/api/demo/privacy-options">Privacy matrix</a>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,39 @@
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Solana / Rust build artifacts
+target/
+programs/**/target/
+programs/**/target-test/
+programs/**/test-ledger/
+
+# Local validators and generated runtime state
+.surfpool/
+.anchor/
+test-ledger/
+ledger/
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+*-keypair.json
+id.json
+
+# Logs and screenshots
+*.log
+*.tmp
+playwright-report/
+test-results/
+
+# Agent-local planning notes
+docs/superpowers/
