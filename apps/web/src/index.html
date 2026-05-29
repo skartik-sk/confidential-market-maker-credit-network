@@ -39,6 +39,7 @@
           <div class="cta-row">
             <button id="run-flow" class="primary-button" type="button">Run credit flow</button>
             <a class="secondary-button" href="/api/demo/proof">View proof JSON</a>
+            <div id="devnet-explorer" class="cta-link"></div>
           </div>
 
           <dl class="hero-stats">
@@ -59,6 +60,12 @@
               <dd id="max-cu">--</dd>
             </div>
           </dl>
+
+          <div id="devnet-banner" class="devnet-banner" style="display:none">
+            <span class="state-pill" style="border-color:rgba(31,173,96,0.4)">LIVE ON DEVNET</span>
+            <span id="devnet-program-id" class="devnet-program-id"></span>
+            <div id="devnet-tx-links" class="devnet-tx-links"></div>
+          </div>
         </div>
 
         <aside class="proof-machine" aria-label="Protocol proof machine">
@@ -70,6 +77,7 @@
             <div class="machine-window">
               <strong>PINOCCHIO VAULT</strong>
               <em id="cluster-name">surfpool</em>
+              <span id="magicblock-status"></span>
             </div>
             <div class="machine-reels">
               <div class="reel"></div>

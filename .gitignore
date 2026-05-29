@@ -8,6 +8,8 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+.next/
+.vercel/
 
 # Solana / Rust build artifacts
 target/

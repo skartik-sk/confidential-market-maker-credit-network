@@ -89,6 +89,9 @@ pub enum CreditVaultInstruction {
     PostReceipt(PostReceiptArgs),
     SettleMaturity(SettleMaturityArgs),
     PauseLine(PauseLineArgs),
+    DelegateCreditLine,
+    CommitCreditLine,
+    CommitAndUndelegateCreditLine,
 }
 
 impl CreditVaultInstruction {
@@ -140,6 +143,9 @@ impl CreditVaultInstruction {
             6 => Ok(Self::PauseLine(PauseLineArgs {
                 target_status: crate::state::LineStatus::from_u8(cursor.read_u8()?)?,
             })),
+            7 => Ok(Self::DelegateCreditLine),
+            8 => Ok(Self::CommitCreditLine),
+            9 => Ok(Self::CommitAndUndelegateCreditLine),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }

@@ -10,9 +10,13 @@ import {
 } from "../../../packages/credit-engine/src";
 import {
   buildPrivacyOptions,
+  computeRiskScore,
   createDealRoomEnvelope,
+  executeSettlement,
   selectPrivacyAdapter,
   token2022ConfidentialTransferStatus,
+  type RiskComputeInput,
+  type SettlementInput,
 } from "../../../packages/privacy-adapter/src";
 import { buildProtocolManifest } from "../../../packages/protocol-manifest/src";
 import {
@@ -28,6 +32,12 @@ const SURFPOOL_PROOF = new URL(
   "../../../programs/credit-vault/deployments/surfpool-2026-05-26.json",
   import.meta.url,
 );
+const DEVNET_PROOF = new URL(
+  "../../../programs/credit-vault/deployments/devnet-2026-05-29.json",
+  import.meta.url,
+);
+const DEVNET_PROGRAM_ID = "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5";
+const DEVNET_CLUSTER = "devnet";
 
 const mandate: RiskMandate = {
   allowedMarkets: ["SOL-PERP", "BTC-PERP"],
@@ -52,6 +62,79 @@ export function buildDemoCreditLine(): CreditLine {
   });
 
   return approveCreditLine(application, { currentSlot: 20_000 });
+}
+
+export function buildDemoRiskCompute() {
+  const input: RiskComputeInput = {
+    inventoryUsd: 48_000,
+    exposureUsd: 7_000,
+    drawdownBps: 450,
+    venueCount: 3,
+  };
+  const result = computeRiskScore(input, mandate.maxDrawdownBps);
+  return { input, result };
+}
+
+export function buildDemoSettlement() {
+  const drawInput: SettlementInput = {
+    kind: "draw",
+    creditLineId: "line_f40dd5a8",
+    borrower: "MM-DEMO-01",
+    poolId: "pool-usdc-sol-market-maker-credit",
+    notes: 10,
+    noteSizeUsd: 1_000,
+    asset: "USDC",
+    market: "SOL-PERP",
+    currentSlot: 20_050,
+  };
+  const repayInput: SettlementInput = {
+    kind: "repay",
+    creditLineId: "line_f40dd5a8",
+    borrower: "MM-DEMO-01",
+    poolId: "pool-usdc-sol-market-maker-credit",
+    notes: 3,
+    noteSizeUsd: 1_000,
+    asset: "USDC",
+    market: "SOL-PERP",
+    currentSlot: 21_000,
+  };
+
+  const drawSettlement = executeSettlement(drawInput, 50_000);
+  const repaySettlement = executeSettlement(repayInput, 50_000);
+
+  // Verify the draw settlement can be decrypted
+  const revealed = JSON.parse(
+    (() => {
+      const { createDecipheriv } = require("node:crypto");
+      const key = require("node:crypto").createHash("sha256")
+        .update(`settlement-dev-secret-change-in-prod:${drawInput.creditLineId}`).digest();
+      const nonce = Buffer.from(drawSettlement.envelope.encryption.nonce, "base64url");
+      const tag = Buffer.from(drawSettlement.envelope.encryption.tag, "base64url");
+      const aad = JSON.stringify({ settlementId: drawSettlement.envelope.settlementId, kind: drawSettlement.envelope.kind, noteDelta: drawSettlement.envelope.noteDelta });
+      const d = createDecipheriv("aes-256-gcm", key, nonce, { authTagLength: 16 });
+      d.setAAD(Buffer.from(aad));
+      d.setAuthTag(tag);
+      return Buffer.concat([d.update(Buffer.from(drawSettlement.envelope.ciphertext, "base64url")), d.final()]).toString("utf8");
+    })(),
+  );
+
+  return {
+    draw: {
+      envelope: drawSettlement.envelope,
+      receipt: drawSettlement.receipt,
+      withdrawalProof: drawSettlement.withdrawalProof,
+    },
+    repay: {
+      envelope: repaySettlement.envelope,
+      receipt: repaySettlement.receipt,
+      withdrawalProof: repaySettlement.withdrawalProof,
+    },
+    verified: {
+      drawDecryptedOk: revealed.borrower === "MM-DEMO-01",
+      drawReceiptValid: drawSettlement.receipt.verified,
+      repayReceiptValid: repaySettlement.receipt.verified,
+    },
+  };
 }
 
 export function buildDemoSnapshot() {
@@ -191,6 +274,34 @@ if (import.meta.main) {
         return json(settleMaturity(snapshot.creditLine, { currentSlot: 51_000 }));
       }
 
+      if (url.pathname === "/api/demo/risk-compute") {
+        return json(buildDemoRiskCompute());
+      }
+
+      if (url.pathname === "/api/demo/settlement") {
+        return json(buildDemoSettlement());
+      }
+
+      if (url.pathname === "/api/devnet/proof") {
+        return json(await readDevnetProof());
+      }
+
+      if (url.pathname === "/api/devnet/info") {
+        return json({
+          cluster: DEVNET_CLUSTER,
+          rpcUrl: "https://api.devnet.solana.com",
+          programId: DEVNET_PROGRAM_ID,
+          explorer: `https://explorer.solana.com/address/${DEVNET_PROGRAM_ID}?cluster=devnet`,
+          magicblock: {
+            erRpc: "https://devnet-as.magicblock.app",
+            teeRpc: "https://devnet-tee.magicblock.app",
+            delegationProgram: "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMRRSaeSh",
+            validatorAsia: "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57",
+            validatorTee: "MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo",
+          },
+        });
+      }
+
       return json(
         {
           error: "not_found",
@@ -201,8 +312,12 @@ if (import.meta.main) {
             "/api/demo/privacy-options",
             "/api/demo/spend-line",
             "/api/demo/maturity",
+            "/api/demo/risk-compute",
+            "/api/demo/settlement",
             "/api/demo/protocol",
             "/api/demo/proof",
+            "/api/devnet/proof",
+            "/api/devnet/info",
           ],
         },
         404,
@@ -250,4 +365,21 @@ function json(value: unknown, status = 200): Response {
       "cache-control": "no-store",
     },
   });
+}
+
+async function readDevnetProof() {
+  const file = Bun.file(DEVNET_PROOF);
+  if (!(await file.exists())) {
+    return {
+      ok: false,
+      reason: "devnet proof not generated yet",
+      expectedCommand: "bun run localnet:devnet-smoke",
+    };
+  }
+  const data = await file.json();
+  return {
+    ok: true,
+    ...data,
+    explorerProgram: `https://explorer.solana.com/address/${DEVNET_PROGRAM_ID}?cluster=devnet`,
+  };
 }

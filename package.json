@@ -8,9 +8,13 @@
     "program:test": "cargo test --manifest-path programs/credit-vault/Cargo.toml",
     "program:build-sbf": "cargo build-sbf --manifest-path programs/credit-vault/Cargo.toml --features bpf-entrypoint",
     "localnet:smoke": "bun run apps/localnet/src/surfpool-smoke.ts",
+    "localnet:devnet-smoke": "bun run apps/localnet/src/devnet-smoke.ts",
     "surfpool:start": "NO_DNA=1 surfpool start --network devnet --no-tui",
     "dev:api": "bun run apps/api/src/server.ts",
     "dev:web": "bun run apps/api/src/server.ts",
+    "dev:next": "cd apps/web-next && bun run dev",
+    "build:next": "cd apps/web-next && bun run build",
+    "start:next": "cd apps/web-next && bun run start",
     "dev:worker": "bun run apps/worker/src/index.ts",
     "check": "bun test && cargo test --manifest-path programs/credit-vault/Cargo.toml && bun run apps/api/src/server.ts --once && bun run apps/worker/src/index.ts --once"
   },
@@ -19,6 +23,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@solana/spl-token": "0.4.14",
     "@solana/web3.js": "^1.98.4"
   }
 }

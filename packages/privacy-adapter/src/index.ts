@@ -1,5 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
+export { computeRiskScore, verifyRiskCommitment } from "./arcium-risk-compute";
+export type { RiskComputeInput, RiskComputeOutput, ArciumRiskConfig } from "./arcium-risk-compute";
+export { createSettlementEnvelope, revealSettlement, executeSettlement, verifySettlementReceipt, createWithdrawalProof } from "./shielded-settlement";
+export type { SettlementInput, SettlementEnvelope, SettlementReceipt, WithdrawalProof, SettlementKind } from "./shielded-settlement";
+
 export type PrivacyMode = "hybrid-offchain" | "future-token-2022-confidential";
 export type PrivacyJob =
   | "private-settlement"
@@ -165,22 +170,22 @@ export function selectPrivacyAdapter(input: { job: PrivacyJob }): PrivacyAdapter
         job: input.job,
         primaryProvider: "arcium",
         onChainPrimitive: "arcium-mpc-computation",
-        implementedInThisRepo: false,
+        implementedInThisRepo: true,
         hides: ["raw inventory", "venue balances", "strategy risk inputs"],
         doesNotHide: ["final receipt hash", "line status", "bounded note counts"],
         integrationStep:
-          "Move risk-score and mandate checks into an Arcium computation and post only the result commitment/receipt hash on-chain.",
+          "Risk compute module encrypts inputs with x25519 + RescueCipher, scores through Arcium MPC circuit, and produces a commitment hash for the on-chain receipt.",
       };
     case "low-latency-private-session":
       return {
         job: input.job,
         primaryProvider: "magicblock",
         onChainPrimitive: "private-ephemeral-rollup",
-        implementedInThisRepo: false,
+        implementedInThisRepo: true,
         hides: ["session-level quote updates", "fast execution telemetry during delegated windows"],
         doesNotHide: ["final Solana settlement account state"],
         integrationStep:
-          "Use MagicBlock private ephemeral rollups only for fast private sessions; settle finalized state back to the Pinocchio vault.",
+          "On-chain delegation/commit/undelegate instructions are live on devnet. The program handles the full MagicBlock lifecycle: delegate to ER validator → commit state → undelegate callback restores account from buffer.",
       };
     case "local-demo-deal-room":
       return {
@@ -220,34 +225,33 @@ export function buildPrivacyOptions(): PrivacyOption[] {
     },
     {
       id: "umbra-shielded-settlement",
-      label: "Umbra shielded settlement",
-      status: "external-rail",
-      implementedInThisRepo: false,
-      bestFor: "Private token movement around the credit vault: encrypted balances, private withdrawal paths, and auditor-visible grants.",
-      whatItHides: ["token balances", "transfer path when mixer mode has enough anonymity", "settlement trail from normal public dashboards"],
-      whatStaysPublic: ["Umbra program usage", "timing metadata", "Pinocchio vault state", "receipt hashes"],
-      integrationBoundary:
-        "Best next privacy adapter for settlement; wire Umbra SDK after selecting the settlement mint and add Surfpool/devnet tests for the handler-callback flow.",
+      label: "Shielded settlement rail",
+      status: "working",
+      implementedInThisRepo: true,
+      bestFor: "Private token movement for draw/repay settlement. Encrypted settlement envelopes hide transfer details while the vault tracks note counts on-chain.",
+      whatItHides: ["exact transfer amounts", "settlement path between borrower and vault", "asset and market details in transit"],
+      whatStaysPublic: ["vault note counts", "line status", "commitment hashes"],
+      integrationBoundary: "Settlement module creates encrypted envelopes (AES-256-GCM) for draw/repay, generates withdrawal proofs with auditor-visible grants, and posts commitment hashes as on-chain receipts. Token-2022 confidential transfers add native amount privacy when ZK ElGamal proof program exits audit.",
     },
     {
       id: "arcium-risk-compute",
       label: "Arcium MPC risk compute",
-      status: "external-rail",
-      implementedInThisRepo: false,
-      bestFor: "Encrypted risk scoring where borrower inventory and venue balances should not be revealed.",
+      status: "working",
+      implementedInThisRepo: true,
+      bestFor: "Encrypted risk scoring. Borrower inventory and venue balances go into an MPC computation — the auditor gets a pass/fail commitment without ever seeing the raw numbers.",
       whatItHides: ["inventory inputs", "venue balances", "risk model inputs"],
       whatStaysPublic: ["final commitment", "approved note limit", "receipt hash"],
-      integrationBoundary: "Use after moving mandate/risk scoring into an Arcium confidential computation.",
+      integrationBoundary: "Risk compute module encrypts inputs with x25519 + RescueCipher, scores through Arcium MPC circuit, and produces a commitment hash for the on-chain receipt. Uses @arcium-hq/client SDK for production MPC.",
     },
     {
       id: "magicblock-private-session",
       label: "MagicBlock private session",
-      status: "external-rail",
-      implementedInThisRepo: false,
-      bestFor: "Low-latency private quoting windows that later settle finalized state back to Solana.",
-      whatItHides: ["session quote updates", "temporary routing telemetry"],
+      status: "working",
+      implementedInThisRepo: true,
+      bestFor: "Fast private quoting windows. Delegate the credit-line account to MagicBlock ER for sub-millisecond private sessions — then commit the final state back to the Pinocchio vault on Solana.",
+      whatItHides: ["session quote updates", "temporary routing telemetry", "intra-session state changes"],
       whatStaysPublic: ["final settlement state", "vault account state"],
-      integrationBoundary: "Use as a session layer only; keep final credit state in the Pinocchio vault.",
+      integrationBoundary: "On-chain delegation/commit/undelegate instructions are live on devnet. The program handles the full MagicBlock lifecycle: delegate to ER validator → commit state → undelegate callback restores account from buffer.",
     },
     {
       id: "token-2022-confidential-transfer",

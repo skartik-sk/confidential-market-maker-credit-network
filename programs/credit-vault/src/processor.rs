@@ -15,6 +15,11 @@ pub fn process_instruction(
     accounts: &mut [AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    // Handle MagicBlock undelegate callback before normal dispatch
+    if crate::mb::is_undelegate_callback(instruction_data) {
+        return crate::mb::undelegate_callback(accounts, program_id, &instruction_data[8..]);
+    }
+
     match CreditVaultInstruction::unpack(instruction_data)? {
         CreditVaultInstruction::InitializePool(args) => {
             let admin_key = signer_key(accounts, 0)?;
@@ -86,6 +91,33 @@ pub fn process_instruction(
             require_owned_writable(line, program_id)?;
             let mut line_data = line.try_borrow_mut()?;
             pause_line_state(&mut line_data, signer_key, args)
+        }
+        CreditVaultInstruction::DelegateCreditLine => {
+            let signer_key = signer_key(accounts, 0)?;
+            let line = account_mut(accounts, 1)?;
+            require_owned_writable(line, program_id)?;
+            let pda_bytes = line.address().to_bytes();
+            let line_data = line.try_borrow()?;
+            let line_account = CreditLineAccount::unpack(&line_data)?;
+            active_line(&line_account)?;
+            if signer_key != line_account.borrower {
+                return Err(ProgramError::IncorrectAuthority);
+            }
+            drop(line_data);
+            let seeds: [&[u8]; 2] = [b"credit_line", &pda_bytes];
+            let (_, bump) = Address::find_program_address(&seeds, program_id);
+            crate::mb::delegate_account(
+                accounts,
+                &seeds,
+                bump,
+                Some(crate::mb::DEVNET_ER_VALIDATOR_ASIA),
+            )
+        }
+        CreditVaultInstruction::CommitCreditLine => {
+            crate::mb::commit_accounts(accounts)
+        }
+        CreditVaultInstruction::CommitAndUndelegateCreditLine => {
+            crate::mb::commit_and_undelegate(accounts)
         }
     }
 }

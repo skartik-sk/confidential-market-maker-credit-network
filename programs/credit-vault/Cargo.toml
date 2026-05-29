@@ -13,4 +13,6 @@ default = []
 bpf-entrypoint = []
 
 [dependencies]
-pinocchio = "0.11.1"
+pinocchio = { version = "0.11.1", features = ["cpi"] }
+pinocchio-pubkey = { version = "0.3", default-features = false, features = ["const"] }
+solana-address = { version = ">=2, <3", default-features = false, features = ["curve25519"] }

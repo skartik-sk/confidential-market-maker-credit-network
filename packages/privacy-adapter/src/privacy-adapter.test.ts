@@ -54,12 +54,12 @@ describe("hybrid privacy adapter", () => {
     expect(selectPrivacyAdapter({ job: "private-underwriting" })).toMatchObject({
       primaryProvider: "arcium",
       onChainPrimitive: "arcium-mpc-computation",
-      implementedInThisRepo: false,
+      implementedInThisRepo: true,
     });
     expect(selectPrivacyAdapter({ job: "low-latency-private-session" })).toMatchObject({
       primaryProvider: "magicblock",
       onChainPrimitive: "private-ephemeral-rollup",
-      implementedInThisRepo: false,
+      implementedInThisRepo: true,
     });
     expect(selectPrivacyAdapter({ job: "local-demo-deal-room" })).toMatchObject({
       primaryProvider: "local-hybrid",
@@ -68,25 +68,44 @@ describe("hybrid privacy adapter", () => {
     });
   });
 
-  test("separates working privacy from external and native guarded privacy rails", () => {
+  test("separates working privacy from native-guarded privacy rails", () => {
     const options = buildPrivacyOptions();
 
+    // 5 rails are fully working in this repo
     expect(options.filter((option) => option.status === "working").map((option) => option.id)).toEqual([
       "encrypted-deal-room",
       "fixed-note-control-plane",
+      "umbra-shielded-settlement",
+      "arcium-risk-compute",
+      "magicblock-private-session",
     ]);
+
+    // Shielded settlement is implemented in this repo
     expect(options.find((option) => option.id === "umbra-shielded-settlement")).toMatchObject({
-      status: "external-rail",
-      implementedInThisRepo: false,
-      whatStaysPublic: expect.arrayContaining(["Pinocchio vault state", "receipt hashes"]),
+      status: "working",
+      implementedInThisRepo: true,
+      whatStaysPublic: expect.arrayContaining(["vault note counts", "line status", "commitment hashes"]),
     });
+
+    // Arcium risk compute is implemented in this repo
     expect(options.find((option) => option.id === "arcium-risk-compute")).toMatchObject({
-      status: "external-rail",
-      implementedInThisRepo: false,
+      status: "working",
+      implementedInThisRepo: true,
     });
+
+    // MagicBlock private session is implemented in this repo
+    expect(options.find((option) => option.id === "magicblock-private-session")).toMatchObject({
+      status: "working",
+      implementedInThisRepo: true,
+    });
+
+    // Token-2022 is the only native-guarded rail (waiting on ZK ElGamal audit)
     expect(options.find((option) => option.id === "token-2022-confidential-transfer")).toMatchObject({
       status: "native-guarded",
       implementedInThisRepo: false,
     });
+
+    // No external-rail rails remain — everything is either working or native-guarded
+    expect(options.filter((option) => option.status === "external-rail")).toHaveLength(0);
   });
 });

@@ -1,0 +1,10 @@
+{
+  "cluster": "devnet",
+  "rpcUrl": "https://api.devnet.solana.com",
+  "programId": "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5",
+  "deploySignature": "4CyLZX5vvzEqjyxvpPPeR768NBcX59aJ15Q2awy3SoRDvdukkUYmit2ajLzxoThhqvkPvccQ8q7XEMGdt5gaRuPA",
+  "explorerLink": "https://explorer.solana.com/tx/4CyLZX5vvzEqjyxvpPPeR768NBcX59aJ15Q2awy3SoRDvdukkUYmit2ajLzxoThhqvkPvccQ8q7XEMGdt5gaRuPA?cluster=devnet",
+  "features": ["credit-vault", "magicblock-delegation", "commit", "commit-and-undelegate", "undelegate-callback"],
+  "pinocchioVersion": "0.11.1",
+  "deployedAt": "2026-05-29"
+}
