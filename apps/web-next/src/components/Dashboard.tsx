@@ -66,9 +66,9 @@ interface FlowStep {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${API_BASE}${path}`, { headers: { accept: "application/json" }, ...init });
+    const res = await fetch(`${API_BASE}${path}`, { headers: { accept: "application/json" } });
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -266,40 +266,42 @@ export function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-bg">
         <div className="text-center space-y-4 animate-fade-in">
-          <div className="w-10 h-10 border-2 border-accent border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-text-dim font-mono text-sm">Loading confidential credit vault...</p>
+          <div className="w-10 h-10 border-2 border-red border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: "#dc2b28" }} />
+          <p className="text-muted font-mono text-sm">Loading confidential credit vault...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-bg">
       {/* ─── NAV ─── */}
-      <nav className="sticky top-0 z-50 border-b border-border bg-bg/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+      <nav className="sticky top-0 z-50 border-b border-line bg-paper/80 backdrop-blur-xl">
+        <div className="max-w-[1840px] mx-auto px-7 h-19 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-lg">🔐</span>
-            <span className="font-semibold tracking-tight">credit-vault</span>
+            <div className="w-[30px] h-[30px] border border-line rounded-lg bg-paper relative">
+              <div className="absolute inset-2 rotate-45" style={{ background: "#dc2b28", borderRadius: "2px" }} />
+            </div>
+            <span className="font-bold text-lg">credit-vault</span>
             {devnetOk && (
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-green/10 text-green border border-green/20 animate-pulse-green">
-                DEVNET LIVE
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded-full state-pill animate-pulse-green">
+                devnet ✅
               </span>
             )}
           </div>
-          <div className="flex items-center gap-4 text-sm text-text-dim">
-            <a href="#flow" className="hover:text-text transition-colors">Flow</a>
-            <a href="#privacy" className="hover:text-text transition-colors">Privacy</a>
-            <a href="#actions" className="hover:text-text transition-colors">Actions</a>
-            <a href="#settlement" className="hover:text-text transition-colors">Settlement</a>
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <a href="#flow" className="hover:text-ink transition-colors">Flow</a>
+            <a href="#privacy" className="hover:text-ink transition-colors">Privacy</a>
+            <a href="#actions" className="hover:text-ink transition-colors">Actions</a>
+            <a href="#settlement" className="hover:text-ink transition-colors">Settlement</a>
             {devnetInfo && (
               <a
                 href={devnetInfo.explorer}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs font-mono px-2 py-1 rounded bg-surface-2 border border-border hover:border-accent/40 transition-colors"
+                className="text-xs font-mono px-3 py-2 rounded border border-line hover:border-red/40 transition-colors"
               >
                 Explorer ↗
               </a>
@@ -309,18 +311,18 @@ export function Dashboard() {
       </nav>
 
       {/* ─── HERO ─── */}
-      <section className="max-w-7xl mx-auto px-6 pt-16 pb-12">
-        <div className="grid lg:grid-cols-5 gap-10">
+      <section className="max-w-[1840px] mx-auto px-7 pt-16 pb-12">
+        <div className="grid lg:grid-cols-5 gap-20">
           {/* Left: copy */}
           <div className="lg:col-span-3 space-y-6 animate-fade-in">
-            <div className="inline-flex items-center gap-2 text-xs font-mono text-accent bg-accent/5 px-3 py-1 rounded-full border border-accent/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-green animate-pulse-green" />
+            <div className="inline-flex items-center gap-2 text-xs font-mono px-3 py-1 release-pill">
+              <span className="w-1.5 h-1.5 rounded-full bg-red animate-pulse" style={{ background: "#dc2b28" }} />
               {devnetOk ? "verified on devnet" : "verified local proof"}
             </div>
-            <h1 className="text-4xl lg:text-5xl font-bold tracking-tight leading-tight">
-              Credit lines that <span className="bg-gradient-to-r from-accent via-purple-400 to-accent bg-clip-text text-transparent">settle quietly.</span>
+            <h1 className="text-6xl font-normal leading-none tracking-tight" style={{ fontFamily: "DotGothic16, monospace" }}>
+              Credit lines that <span style={{ color: "#dc2b28" }}>settle quietly.</span>
             </h1>
-            <p className="text-text-dim text-lg max-w-xl leading-relaxed">
+            <p className="text-muted text-lg max-w-2xl leading-relaxed">
               Confidential operating credit for Solana market makers. Borrowers move through fixed
               note draws, auditor receipts, and private settlement rails — without exposing every input.
             </p>
@@ -329,19 +331,20 @@ export function Dashboard() {
             <div className="flex flex-wrap gap-3 pt-2">
               <button
                 onClick={runFlow}
-                className="px-5 py-2.5 rounded-lg bg-accent text-white font-medium text-sm hover:bg-accent-dim transition-colors"
+                className="min-h-[42px] px-5 py-2 rounded border bg-red text-white font-bold text-sm hover:opacity-90 transition-opacity"
+                style={{ borderColor: "#dc2b28", background: "#dc2b28" }}
               >
                 ▶ Run credit flow
               </button>
               <a
                 href="/api/demo/proof"
-                className="px-5 py-2.5 rounded-lg bg-surface-2 border border-border text-sm hover:border-accent/40 transition-colors"
+                className="min-h-[42px] px-5 py-2 rounded border bg-white/72 font-bold text-sm hover:border-red/40 transition-colors"
               >
                 View proof JSON
               </a>
               <a
                 href="/api/demo/protocol"
-                className="px-5 py-2.5 rounded-lg bg-surface-2 border border-border text-sm hover:border-accent/40 transition-colors"
+                className="min-h-[42px] px-5 py-2 rounded border bg-white/72 font-bold text-sm hover:border-red/40 transition-colors"
               >
                 Protocol manifest
               </a>
@@ -349,35 +352,43 @@ export function Dashboard() {
 
             {/* Stats */}
             {credit && (
-              <div className="grid grid-cols-4 gap-4 pt-4">
+              <div className="grid grid-cols-4 gap-0 pt-4 max-w-[700px]">
                 {[
                   { label: "limit", value: `${credit.limitNotes} notes` },
                   { label: "drawn", value: `${credit.drawnNotes} notes` },
                   { label: "repaid", value: `${credit.repaidNotes} notes` },
                   { label: "max CU", value: "1,300" },
                 ].map((s) => (
-                  <div key={s.label} className="bg-surface rounded-lg border border-border p-3">
-                    <dt className="text-[11px] font-mono uppercase text-text-dim">{s.label}</dt>
-                    <dd className="text-lg font-semibold mt-1">{s.value}</dd>
+                  <div key={s.label} className="min-h-[58px] flex items-baseline gap-2 px-5 border-r border-line last:border-r-0">
+                    <dt className="text-muted font-mono text-xs uppercase">{s.label}</dt>
+                    <dd className="font-mono font-bold text-sm">{s.value}</dd>
                   </div>
                 ))}
               </div>
             )}
 
+            {/* Proof strip */}
+            <div className="flex items-center gap-0 min-h-[52px] max-w-[700px] proof-strip">
+              <span className="min-h-[52px] flex items-center px-4 font-mono text-xs uppercase text-red">active line</span>
+              <strong className="min-h-[52px] flex items-center flex-1 px-4 font-mono text-sm border-l border-red/20">
+                {credit?.id ?? "loading..."}
+              </strong>
+            </div>
+
             {/* Devnet banner */}
             {devnetOk && devnetInfo && (
-              <div className="bg-green/5 border border-green/20 rounded-lg p-4 space-y-2">
+              <div className="bg-green-5 border border-green/20 rounded-lg p-4 space-y-2 max-w-[700px]" style={{ background: "rgba(236, 255, 244, 0.78)" }}>
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-green animate-pulse-green" />
                   <span className="text-sm font-semibold text-green">Live on Solana Devnet</span>
                 </div>
-                <p className="text-xs font-mono text-text-dim">
-                  Program: <code className="text-accent">{devnetInfo.programId}</code>
+                <p className="text-xs font-mono text-muted">
+                  Program: <code className="text-red">{devnetInfo.programId}</code>
                 </p>
                 <div className="flex gap-2">
-                  <a href={devnetInfo.explorer} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline">Explorer ↗</a>
-                  <span className="text-border">|</span>
-                  <span className="text-xs text-text-dim">MagicBlock ER: {devnetInfo.magicblock.erRpc}</span>
+                  <a href={devnetInfo.explorer} target="_blank" rel="noopener noreferrer" className="text-xs text-red hover:underline">Explorer ↗</a>
+                  <span className="text-line">|</span>
+                  <span className="text-xs text-muted">MagicBlock ER: {devnetInfo.magicblock.erRpc}</span>
                 </div>
               </div>
             )}
@@ -385,55 +396,58 @@ export function Dashboard() {
 
           {/* Right: proof machine */}
           <div className="lg:col-span-2 animate-fade-in" style={{ animationDelay: "0.15s" }}>
-            <div className="bg-surface rounded-xl border border-border overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-                <span className="w-2.5 h-2.5 rounded-full bg-red/60" />
-                <span className="w-2.5 h-2.5 rounded-full bg-amber/60" />
-                <span className="w-2.5 h-2.5 rounded-full bg-green/60" />
-                <span className="ml-auto text-[11px] font-mono text-text-dim">
-                  {devnetOk ? "DEVNET" : "SURFPOOL"}
-                </span>
+            <div className="machine-shell min-h-[380px] p-6">
+              {/* Machine top */}
+              <div className="flex gap-4 mb-6 border-b border-ink/12 pb-4">
+                {[1,2,3].map((i) => (
+                  <div key={i} className="w-[30px] h-[30px] border border-ink/15 rounded-full bg-gradient-to-br from-white to-[#cfcac1]" />
+                ))}
+                <div className="ml-auto w-[44px] h-[44px] border border-ink/15 rounded-full bg-gradient-to-br from-white to-[#cfcac1]" />
               </div>
-              <div className="p-5 space-y-4">
-                <div className="text-center">
-                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-dim">Pinocchio Vault</p>
-                  <p className="font-semibold mt-1">confidential-credit-vault</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                  {[
-                    { label: "Program", value: devnetInfo?.programId ?? "G4xPV..." },
-                    { label: "Framework", value: "Pinocchio 0.11.1" },
-                    { label: "Binary", value: "50 KB" },
-                    { label: "Cluster", value: devnetOk ? "devnet" : "surfpool" },
-                  ].map((d) => (
-                    <div key={d.label} className="bg-surface-2 rounded-lg p-2.5">
-                      <p className="text-text-dim text-[10px] uppercase">{d.label}</p>
-                      <p className="mt-0.5 truncate">{d.value}</p>
-                    </div>
-                  ))}
-                </div>
-                {credit && (
-                  <div className="bg-surface-2 rounded-lg p-3 text-xs font-mono space-y-1.5">
-                    <p className="text-text-dim text-[10px] uppercase">Active Line</p>
-                    <p>ID: <span className="text-accent">{credit.id}</span></p>
-                    <p>Status: <span className={credit.status === 1 ? "text-green" : "text-amber"}>{statusLabel(credit.status)}</span></p>
-                    <p>Borrower: {credit.borrower} · Auditor: {credit.auditor}</p>
+
+              {/* Machine window */}
+              <div className="flex items-center justify-between gap-4 border border-ink/12 bg-white/50 p-5 mb-6">
+                <strong className="font-mono text-xs uppercase">PINOCCHIO VAULT</strong>
+                <em className="font-mono text-xs text-green">{devnetOk ? "DEVNET" : "SURFPOOL"}</em>
+              </div>
+
+              {/* Machine data */}
+              <div className="grid grid-cols-2 gap-3 text-xs font-mono space-y-3">
+                {[
+                  { label: "Program", value: devnetInfo?.programId ?? "G4xPV..." },
+                  { label: "Framework", value: "Pinocchio 0.11.1" },
+                  { label: "Binary", value: "50 KB" },
+                  { label: "Cluster", value: devnetOk ? "devnet" : "surfpool" },
+                ].map((d) => (
+                  <div key={d.label} className="bg-white/50 rounded p-2.5">
+                    <p className="text-muted text-[10px] uppercase">{d.label}</p>
+                    <p className="mt-0.5 truncate">{d.value}</p>
                   </div>
-                )}
+                ))}
               </div>
+
+              {/* Active line */}
+              {credit && (
+                <div className="bg-white/50 rounded p-3 text-xs font-mono space-y-1.5 mt-4">
+                  <p className="text-muted text-[10px] uppercase">Active Line</p>
+                  <p>ID: <span className="text-red">{credit.id}</span></p>
+                  <p>Status: <span className={credit.status === 1 ? "text-green" : "text-amber"}>{statusLabel(credit.status)}</span></p>
+                  <p>Borrower: {credit.borrower} · Auditor: {credit.auditor}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </section>
 
       {/* ─── CREDIT FLOW ─── */}
-      <section id="flow" className="max-w-7xl mx-auto px-6 py-16">
+      <section id="flow" className="max-w-[1840px] mx-auto px-7 py-16">
         <div className="mb-8">
-          <span className="text-xs font-mono uppercase tracking-widest text-accent">Showcase</span>
-          <h2 className="text-3xl font-bold mt-2 tracking-tight">
-            Follow the <span className="bg-gradient-to-r from-accent to-purple-400 bg-clip-text text-transparent">credit path.</span>
+          <span className="text-xs font-mono uppercase tracking-widest text-red">Showcase</span>
+          <h2 className="text-5xl font-normal mt-2 tracking-tight" style={{ fontFamily: "DotGothic16, monospace" }}>
+            Follow the <span style={{ color: "#dc2b28" }}>credit path.</span>
           </h2>
-          <p className="text-text-dim mt-2 max-w-lg">
+          <p className="text-muted mt-2 max-w-lg">
             One line, one borrower, one underwriter, one auditor. Each action produces a bounded state change and a machine-readable receipt.
           </p>
         </div>
@@ -445,21 +459,21 @@ export function Dashboard() {
               <button
                 key={step.label}
                 onClick={() => { setActiveStep(i); setFlowRunning(false); }}
-                className={`w-full text-left px-4 py-3 rounded-lg border transition-all text-sm ${
+                className={`w-full text-left px-4 py-3 rounded border transition-all text-sm ${
                   i === activeStep
-                    ? "bg-accent/8 border-accent/30 shadow-[0_0_20px_-5px_rgba(108,140,255,0.15)]"
+                    ? "bg-red/8 border-red/30 shadow-md"
                     : i < activeStep
-                    ? "bg-green/3 border-green/10"
-                    : "bg-surface border-border hover:border-border"
+                    ? "bg-green/5 border-green/10"
+                    : "bg-white border-line"
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <span className={`text-[11px] font-mono w-6 text-right ${i === activeStep ? "text-accent" : "text-text-dim"}`}>
+                  <span className={`text-[11px] font-mono w-6 text-right ${i === activeStep ? "text-red" : "text-muted"}`}>
                     {String(i + 1).padStart(2, "0")}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className={`font-medium truncate ${i === activeStep ? "text-text" : "text-text-dim"}`}>{step.title}</p>
-                    <p className="text-[11px] font-mono text-text-dim">{step.label}</p>
+                    <p className={`font-medium truncate ${i === activeStep ? "text-ink" : "text-muted"}`}>{step.title}</p>
+                    <p className="text-[11px] font-mono text-muted">{step.label}</p>
                   </div>
                   {i < activeStep && <span className="text-green text-xs">✓</span>}
                 </div>
@@ -470,19 +484,19 @@ export function Dashboard() {
           {/* Output panel */}
           <div className="lg:col-span-3">
             {currentStep && (
-              <div className="bg-surface rounded-xl border border-border p-6 space-y-5 animate-fade-in" key={activeStep}>
+              <div className="bg-white rounded-xl border border-line p-6 space-y-5 animate-fade-in" key={activeStep}>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent/10 text-accent">
+                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-red/10 text-red">
                     Step {String(activeStep + 1).padStart(2, "0")}
                   </span>
                   <h3 className="font-semibold text-lg">{currentStep.title}</h3>
                 </div>
-                <p className="text-text-dim text-sm leading-relaxed">{currentStep.summary}</p>
-                <div className="bg-surface-2 rounded-lg p-4 space-y-2 font-mono text-xs">
+                <p className="text-muted text-sm leading-relaxed">{currentStep.summary}</p>
+                <div className="bg-line/30 rounded-lg p-4 space-y-2 font-mono text-xs">
                   {Object.entries(currentStep.output).map(([k, v]) => (
                     <div key={k} className="flex gap-3">
-                      <span className="text-text-dim min-w-[100px]">{k}:</span>
-                      <span className="text-accent break-all">{v}</span>
+                      <span className="text-muted min-w-[100px]">{k}:</span>
+                      <span className="text-red break-all">{v}</span>
                     </div>
                   ))}
                 </div>
@@ -493,13 +507,13 @@ export function Dashboard() {
       </section>
 
       {/* ─── INTERACTIVE ACTIONS ─── */}
-      <section id="actions" className="max-w-7xl mx-auto px-6 py-16">
+      <section id="actions" className="max-w-[1840px] mx-auto px-7 py-16">
         <div className="mb-8">
-          <span className="text-xs font-mono uppercase tracking-widest text-accent">Execute</span>
-          <h2 className="text-3xl font-bold mt-2 tracking-tight">
-            Run the <span className="bg-gradient-to-r from-accent to-purple-400 bg-clip-text text-transparent">live cycle.</span>
+          <span className="text-xs font-mono uppercase tracking-widest text-red">Execute</span>
+          <h2 className="text-5xl font-normal mt-2 tracking-tight" style={{ fontFamily: "DotGothic16, monospace" }}>
+            Run the <span style={{ color: "#dc2b28" }}>live cycle.</span>
           </h2>
-          <p className="text-text-dim mt-2 max-w-lg">
+          <p className="text-muted mt-2 max-w-lg">
             Execute real credit operations against the API. Each button triggers an end-to-end flow through the privacy rails.
           </p>
         </div>
@@ -518,32 +532,32 @@ export function Dashboard() {
                 key={action.id}
                 onClick={() => doAction(action.id)}
                 disabled={actionBusy}
-                className="w-full text-left px-5 py-4 rounded-xl bg-surface border border-border hover:border-accent/30 hover:bg-accent/3 transition-all group disabled:opacity-50"
+                className="w-full text-left px-5 py-4 rounded-xl bg-white border border-line hover:border-red/30 hover:bg-red/5 transition-all group disabled:opacity-50"
               >
                 <div className="flex items-start gap-4">
                   <span className="text-2xl">{action.icon}</span>
                   <div className="flex-1">
-                    <p className="font-medium group-hover:text-accent transition-colors">{action.label}</p>
-                    <p className="text-xs text-text-dim mt-0.5">{action.desc}</p>
+                    <p className="font-medium group-hover:text-red transition-colors">{action.label}</p>
+                    <p className="text-xs text-muted mt-0.5">{action.desc}</p>
                   </div>
-                  <span className="text-text-dim text-xs group-hover:text-accent transition-colors">→</span>
+                  <span className="text-muted text-xs group-hover:text-red transition-colors">→</span>
                 </div>
               </button>
             ))}
           </div>
 
           {/* Action log */}
-          <div className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <span className="text-xs font-mono uppercase text-text-dim">Execution Log</span>
-              <span className="text-[10px] font-mono text-text-dim">{actionLog.length} entries</span>
+          <div className="bg-white rounded-xl border border-line overflow-hidden">
+            <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+              <span className="text-xs font-mono uppercase text-muted">Execution Log</span>
+              <span className="text-[10px] font-mono text-muted">{actionLog.length} entries</span>
             </div>
             <div className="p-4 h-[380px] overflow-y-auto space-y-1.5 font-mono text-xs">
               {actionLog.length === 0 ? (
-                <p className="text-text-dim text-center py-8">Click an action to see live execution results</p>
+                <p className="text-muted text-center py-8">Click an action to see live execution results</p>
               ) : (
                 actionLog.map((log, i) => (
-                  <div key={i} className="bg-surface-2 rounded px-3 py-2 animate-slide-in" style={{ animationDelay: `${i * 30}ms` }}>
+                  <div key={i} className="bg-line/30 rounded px-3 py-2 animate-slide-in" style={{ animationDelay: `${i * 30}ms` }}>
                     {log}
                   </div>
                 ))
@@ -554,13 +568,13 @@ export function Dashboard() {
       </section>
 
       {/* ─── PRIVACY RAILS ─── */}
-      <section id="privacy" className="max-w-7xl mx-auto px-6 py-16">
+      <section id="privacy" className="max-w-[1840px] mx-auto px-7 py-16">
         <div className="mb-8">
-          <span className="text-xs font-mono uppercase tracking-widest text-accent">Privacy</span>
-          <h2 className="text-3xl font-bold mt-2 tracking-tight">
-            Use the right <span className="bg-gradient-to-r from-accent to-purple-400 bg-clip-text text-transparent">rail.</span>
+          <span className="text-xs font-mono uppercase tracking-widest text-red">Privacy</span>
+          <h2 className="text-5xl font-normal mt-2 tracking-tight" style={{ fontFamily: "DotGothic16, monospace" }}>
+            Use the right <span style={{ color: "#dc2b28" }}>rail.</span>
           </h2>
-          <p className="text-text-dim mt-2 max-w-lg">
+          <p className="text-muted mt-2 max-w-lg">
             The vault is the accounting truth. Privacy rails attach at the disclosure, risk, and settlement boundaries.
           </p>
         </div>
@@ -569,8 +583,8 @@ export function Dashboard() {
           {privacy.map((option) => (
             <div
               key={option.id}
-              className={`bg-surface rounded-xl border p-5 space-y-3 transition-all hover:border-accent/20 ${
-                option.status === "native-guarded" ? "border-amber/20 opacity-70" : "border-border"
+              className={`bg-white rounded-xl border p-5 space-y-3 transition-all hover:border-red/20 ${
+                option.status === "native-guarded" ? "border-amber/30 opacity-70" : "border-line"
               }`}
             >
               <div className="flex items-center justify-between">
@@ -580,17 +594,17 @@ export function Dashboard() {
                       ? "bg-green/10 text-green"
                       : option.status === "native-guarded"
                       ? "bg-amber/10 text-amber"
-                      : "bg-surface-2 text-text-dim"
+                      : "bg-line text-muted"
                   }`}
                 >
                   {option.status === "working" ? "✅ working" : option.status === "native-guarded" ? "⏳ guarded" : option.status}
                 </span>
                 {option.implementedInThisRepo && (
-                  <span className="text-[10px] font-mono text-accent">in this repo</span>
+                  <span className="text-[10px] font-mono text-red">in this repo</span>
                 )}
               </div>
               <h3 className="font-semibold">{option.label}</h3>
-              <p className="text-xs text-text-dim leading-relaxed">{option.bestFor}</p>
+              <p className="text-xs text-muted leading-relaxed">{option.bestFor}</p>
               {option.status === "native-guarded" && (
                 <p className="text-[11px] text-amber leading-relaxed">
                   Requires Solana ZK ElGamal proof program — currently under security audit.
@@ -598,7 +612,7 @@ export function Dashboard() {
               )}
               <div className="flex flex-wrap gap-1">
                 {option.whatItHides.slice(0, 3).map((h) => (
-                  <span key={h} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/5 text-accent-dim">
+                  <span key={h} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red/5 text-red/80">
                     hides: {h}
                   </span>
                 ))}
@@ -609,18 +623,18 @@ export function Dashboard() {
       </section>
 
       {/* ─── RISK + SETTLEMENT DETAIL ─── */}
-      <section id="settlement" className="max-w-7xl mx-auto px-6 py-16">
+      <section id="settlement" className="max-w-[1840px] mx-auto px-7 py-16">
         <div className="mb-8">
-          <span className="text-xs font-mono uppercase tracking-widest text-accent">Verification</span>
-          <h2 className="text-3xl font-bold mt-2 tracking-tight">
-            Real crypto <span className="bg-gradient-to-r from-accent to-purple-400 bg-clip-text text-transparent">under the hood.</span>
+          <span className="text-xs font-mono uppercase tracking-widest text-red">Verification</span>
+          <h2 className="text-5xl font-normal mt-2 tracking-tight" style={{ fontFamily: "DotGothic16, monospace" }}>
+            Real crypto <span style={{ color: "#dc2b28" }}>under the hood.</span>
           </h2>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Risk compute */}
-          <div className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="px-5 py-3 border-b border-border">
+          <div className="bg-white rounded-xl border border-line overflow-hidden">
+            <div className="px-5 py-3 border-b border-line">
               <h3 className="font-semibold text-sm">Arcium MPC Risk Compute</h3>
             </div>
             {risk ? (
@@ -628,7 +642,7 @@ export function Dashboard() {
                 <div className="flex items-center gap-3">
                   <span className={`w-3 h-3 rounded-full ${risk.result.passed ? "bg-green" : "bg-red"}`} />
                   <span className="font-semibold">{risk.result.passed ? "PASSED" : "FAILED"}</span>
-                  <span className="text-xs font-mono text-text-dim ml-auto">{risk.result.riskScoreBps} bps</span>
+                  <span className="text-xs font-mono text-muted ml-auto">{risk.result.riskScoreBps} bps</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                   {[
@@ -637,25 +651,25 @@ export function Dashboard() {
                     { label: "Drawdown", value: `${risk.input.drawdownBps} bps` },
                     { label: "Venues", value: `${risk.input.venueCount}` },
                   ].map((d) => (
-                    <div key={d.label} className="bg-surface-2 rounded p-2">
-                      <p className="text-text-dim text-[10px] uppercase">{d.label}</p>
+                    <div key={d.label} className="bg-line/30 rounded p-2">
+                      <p className="text-muted text-[10px] uppercase">{d.label}</p>
                       <p className="mt-0.5">{d.value}</p>
                     </div>
                   ))}
                 </div>
-                <div className="bg-surface-2 rounded p-3 text-xs font-mono">
-                  <p className="text-text-dim text-[10px] uppercase">Commitment Hash</p>
-                  <p className="text-accent mt-1 break-all">{risk.result.commitmentHash}</p>
+                <div className="bg-line/30 rounded p-3 text-xs font-mono">
+                  <p className="text-muted text-[10px] uppercase">Commitment Hash</p>
+                  <p className="text-red mt-1 break-all">{risk.result.commitmentHash}</p>
                 </div>
               </div>
             ) : (
-              <div className="p-8 text-center text-text-dim text-sm">Risk data unavailable</div>
+              <div className="p-8 text-center text-muted text-sm">Risk data unavailable</div>
             )}
           </div>
 
           {/* Settlement */}
-          <div className="bg-surface rounded-xl border border-border overflow-hidden">
-            <div className="px-5 py-3 border-b border-border">
+          <div className="bg-white rounded-xl border border-line overflow-hidden">
+            <div className="px-5 py-3 border-b border-line">
               <h3 className="font-semibold text-sm">Shielded Settlement</h3>
             </div>
             {settlement ? (
@@ -669,49 +683,49 @@ export function Dashboard() {
                   ].map((v) => (
                     <div key={v.label} className={`rounded-lg p-3 text-center text-xs font-mono ${v.ok ? "bg-green/5 border border-green/20" : "bg-red/5 border border-red/20"}`}>
                       <span className={v.ok ? "text-green" : "text-red"}>{v.ok ? "✓" : "✗"}</span>
-                      <p className="text-text-dim mt-1 text-[10px]">{v.label}</p>
+                      <p className="text-muted mt-1 text-[10px]">{v.label}</p>
                     </div>
                   ))}
                 </div>
 
                 {/* Draw envelope */}
-                <div className="bg-surface-2 rounded p-3 text-xs font-mono space-y-1.5">
-                  <p className="text-text-dim text-[10px] uppercase">Draw Envelope</p>
-                  <p>ID: <span className="text-accent">{settlement.draw.envelope.settlementId}</span></p>
+                <div className="bg-line/30 rounded p-3 text-xs font-mono space-y-1.5">
+                  <p className="text-muted text-[10px] uppercase">Draw Envelope</p>
+                  <p>ID: <span className="text-red">{settlement.draw.envelope.settlementId}</span></p>
                   <p>Kind: {settlement.draw.envelope.kind} · Delta: {settlement.draw.envelope.noteDelta} notes</p>
-                  <p>Commitment: <span className="text-accent break-all">{settlement.draw.envelope.commitment}</span></p>
+                  <p>Commitment: <span className="text-red break-all">{settlement.draw.envelope.commitment}</span></p>
                   <p>Receipt: <span className="text-green">{settlement.draw.receipt.receiptHash}</span></p>
                 </div>
 
                 {/* Repay envelope */}
-                <div className="bg-surface-2 rounded p-3 text-xs font-mono space-y-1.5">
-                  <p className="text-text-dim text-[10px] uppercase">Repay Envelope</p>
-                  <p>ID: <span className="text-accent">{settlement.repay.envelope.settlementId}</span></p>
+                <div className="bg-line/30 rounded p-3 text-xs font-mono space-y-1.5">
+                  <p className="text-muted text-[10px] uppercase">Repay Envelope</p>
+                  <p>ID: <span className="text-red">{settlement.repay.envelope.settlementId}</span></p>
                   <p>Kind: {settlement.repay.envelope.kind} · Delta: {settlement.repay.envelope.noteDelta} notes</p>
-                  <p>Commitment: <span className="text-accent break-all">{settlement.repay.envelope.commitment}</span></p>
+                  <p>Commitment: <span className="text-red break-all">{settlement.repay.envelope.commitment}</span></p>
                   <p>Receipt: <span className="text-green">{settlement.repay.receipt.receiptHash}</span></p>
                 </div>
               </div>
             ) : (
-              <div className="p-8 text-center text-text-dim text-sm">Settlement data unavailable</div>
+              <div className="p-8 text-center text-muted text-sm">Settlement data unavailable</div>
             )}
           </div>
         </div>
       </section>
 
       {/* ─── FOOTER ─── */}
-      <footer className="border-t border-border mt-8">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3 text-sm text-text-dim">
+      <footer className="border-t border-line mt-8">
+        <div className="max-w-[1840px] mx-auto px-7 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-sm text-muted">
             <span>🔐</span>
             <span>Confidential Market-Maker Credit Network</span>
           </div>
-          <div className="flex items-center gap-4 text-xs font-mono text-text-dim">
-            <a href="/api/demo/protocol" className="hover:text-accent transition-colors">Protocol</a>
-            <a href="/api/demo/privacy-options" className="hover:text-accent transition-colors">Privacy</a>
-            <a href="/api/demo/proof" className="hover:text-accent transition-colors">Proof</a>
-            <a href="/api/demo/risk-compute" className="hover:text-accent transition-colors">Risk</a>
-            <a href="/api/demo/settlement" className="hover:text-accent transition-colors">Settlement</a>
+          <div className="flex items-center gap-4 text-xs font-mono text-muted">
+            <a href="/api/demo/protocol" className="hover:text-red transition-colors">Protocol</a>
+            <a href="/api/demo/privacy-options" className="hover:text-red transition-colors">Privacy</a>
+            <a href="/api/demo/proof" className="hover:text-red transition-colors">Proof</a>
+            <a href="/api/demo/risk-compute" className="hover:text-red transition-colors">Risk</a>
+            <a href="/api/demo/settlement" className="hover:text-red transition-colors">Settlement</a>
           </div>
         </div>
       </footer>

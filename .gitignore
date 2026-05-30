@@ -11,6 +11,9 @@ coverage/
 .next/
 .vercel/
 
+# Local files (not for GitHub)
+VIDEO_SCRIPT.md
+
 # Solana / Rust build artifacts
 target/
 programs/**/target/
