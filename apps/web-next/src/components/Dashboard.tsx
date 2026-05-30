@@ -522,11 +522,11 @@ export function Dashboard() {
           {/* Action buttons */}
           <div className="space-y-3">
             {[
-              { id: "apply", label: "Apply for Credit Line", desc: "Load a credit application with encrypted deal room terms", icon: "📋" },
-              { id: "draw", label: "Draw Notes", desc: "Draw inventory notes with shielded settlement envelope", icon: "💰" },
-              { id: "risk", label: "Run Risk Compute", desc: "Execute encrypted MPC risk scoring via Arcium", icon: "🧮" },
-              { id: "repay", label: "Repay Notes", desc: "Repay outstanding notes with encrypted receipt", icon: "🔄" },
-              { id: "settle", label: "Verify Settlement", desc: "Verify draw/repay settlement envelopes and receipts", icon: "✅" },
+              { id: "apply", label: "Apply for Credit Line", desc: "Load a credit application with encrypted deal room terms" },
+              { id: "draw", label: "Draw Notes", desc: "Draw inventory notes with shielded settlement envelope" },
+              { id: "risk", label: "Run Risk Compute", desc: "Execute encrypted MPC risk scoring via Arcium" },
+              { id: "repay", label: "Repay Notes", desc: "Repay outstanding notes with encrypted receipt" },
+              { id: "settle", label: "Verify Settlement", desc: "Verify draw/repay settlement envelopes and receipts" },
             ].map((action) => (
               <button
                 key={action.id}
@@ -534,9 +534,8 @@ export function Dashboard() {
                 disabled={actionBusy}
                 className="w-full text-left px-5 py-4 rounded-xl bg-white border border-line hover:border-red/30 hover:bg-red/5 transition-all group disabled:opacity-50"
               >
-                <div className="flex items-start gap-4">
-                  <span className="text-2xl">{action.icon}</span>
-                  <div className="flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
                     <p className="font-medium group-hover:text-red transition-colors">{action.label}</p>
                     <p className="text-xs text-muted mt-0.5">{action.desc}</p>
                   </div>
