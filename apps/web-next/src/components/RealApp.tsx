@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import {
   PublicKey,
   Keypair,
@@ -93,8 +93,13 @@ import {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+const WalletMultiButtonDynamic = dynamic(
+  () => import("@solana/wallet-adapter-react-ui").then(m => m.WalletMultiButton),
+  { ssr: false }
+);
+
 function WalletConnectButton() {
-  return <WalletMultiButton />;
+  return <WalletMultiButtonDynamic />;
 }
 
 const TABS = ["interact", "usdc", "risk", "settlement", "magicblock", "token2022", "history"] as const;
@@ -124,8 +129,9 @@ export function RealApp() {
   const [stealthResult, setStealthResult] = useState<any>(null);
   const [noteSize, setNoteSize] = useState(1000);
   const [limitNotes, setLimitNotes] = useState(50);
-  const [drawCount, setDrawCount] = useState(1);
-  const [repayCount, setRepayCount] = useState(1);
+  const [drawAmount, setDrawAmount] = useState(1000);
+  const [repayAmount, setRepayAmount] = useState(1000);
+  const [showPrivateValues, setShowPrivateValues] = useState(false);
 
   const connected = wallet.connected && !!wallet.publicKey;
 
@@ -290,11 +296,20 @@ export function RealApp() {
     if (!wallet.publicKey || !poolAddress) return;
     setBusy(true);
     try {
+      // Fetch fresh pool state to get the on-chain maturity slot
+      await fetchPool();
+      const poolInfo = await connection.getAccountInfo(new PublicKey(poolAddress), "confirmed");
+      if (!poolInfo) { log("Pool not found on-chain"); setBusy(false); return; }
+      const freshPool = parsePoolAccount(Buffer.from(poolInfo.data));
+      if (!freshPool) { log("Pool not initialized"); setBusy(false); return; }
+
       const lineKp = Keypair.generate();
       const addr = lineKp.publicKey.toBase58();
       setLineAddress(addr);
       log(`Approving line: ${addr.slice(0, 12)}...`);
       const slot = await connection.getSlot("confirmed");
+      // Line maturity must be <= pool maturity (from on-chain state, NOT current slot + N)
+      const lineMaturity = Math.min(freshPool.maturitySlot - 5000, freshPool.maturitySlot);
       const ix = createApproveCreditLineIx({
         pool: new PublicKey(poolAddress),
         creditLine: lineKp.publicKey,
@@ -304,7 +319,7 @@ export function RealApp() {
         termsHash: PublicKey.default,
         mandateHash: PublicKey.default,
         openedSlot: slot,
-        maturitySlot: slot + 25000,
+        maturitySlot: lineMaturity,
       });
       const sig = await sendTxBatch([
         SystemProgram.createAccount({
@@ -320,33 +335,45 @@ export function RealApp() {
       await fetchLine(addr);
     } catch (e: any) { log(`Approve failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet, connection, poolAddress, limitNotes, log, sendTxBatch, fetchLine]);
+  }, [wallet, connection, poolAddress, limitNotes, log, sendTxBatch, fetchLine, fetchPool]);
 
   const handleDraw = useCallback(async () => {
     if (!wallet.publicKey || !poolAddress || !lineAddress) return;
     setBusy(true);
     try {
+      const noteSizeUsd = poolData?.noteSizeUsd ?? noteSize;
+      if (drawAmount < noteSizeUsd) { log(`Minimum draw is $${noteSizeUsd.toLocaleString()} (1 note). You entered $${drawAmount}.`); setBusy(false); return; }
+      const notes = Math.floor(drawAmount / noteSizeUsd);
+      const actualUsd = notes * noteSizeUsd;
+      const remainingNotes = (lineData?.limitNotes ?? 0) - (lineData?.drawnNotes ?? 0);
+      if (notes > remainingNotes) { log(`Only ${remainingNotes} notes remaining in limit ($${(remainingNotes * noteSizeUsd).toLocaleString()})`); setBusy(false); return; }
       const slot = await connection.getSlot("confirmed");
-      const ix = createDrawTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes: drawCount, currentSlot: slot });
+      const ix = createDrawTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes, currentSlot: slot });
       const sig = await sendTx(ix, "draw");
-      log(`Drew ${drawCount} note(s)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`Drew ${notes} note${notes > 1 ? "s" : ""} ($${actualUsd.toLocaleString()}, encrypted values)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(); await fetchLine();
     } catch (e: any) { log(`Draw failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet, connection, poolAddress, lineAddress, drawCount, sendTx, log, fetchPool, fetchLine]);
+  }, [wallet, connection, poolAddress, lineAddress, drawAmount, poolData, lineData, noteSize, sendTx, log, fetchPool, fetchLine]);
 
   const handleRepay = useCallback(async () => {
     if (!wallet.publicKey || !poolAddress || !lineAddress) return;
     setBusy(true);
     try {
+      const noteSizeUsd = poolData?.noteSizeUsd ?? noteSize;
+      const outstanding = (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0);
+      if (outstanding === 0) { log("Nothing to repay — draw credit first!"); setBusy(false); return; }
+      if (repayAmount < noteSizeUsd) { log(`Minimum repay is $${noteSizeUsd.toLocaleString()} (1 note). You entered $${repayAmount}.`); setBusy(false); return; }
+      const notes = Math.min(Math.floor(repayAmount / noteSizeUsd), outstanding);
+      const actualUsd = notes * noteSizeUsd;
       const slot = await connection.getSlot("confirmed");
-      const ix = createRepayTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes: repayCount, currentSlot: slot });
+      const ix = createRepayTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes, currentSlot: slot });
       const sig = await sendTx(ix, "repay");
-      log(`Repaid ${repayCount} note(s)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`Repaid ${notes} note${notes > 1 ? "s" : ""} ($${actualUsd.toLocaleString()}, shielded)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(); await fetchLine();
     } catch (e: any) { log(`Repay failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet, connection, poolAddress, lineAddress, repayCount, sendTx, log, fetchPool, fetchLine]);
+  }, [wallet, connection, poolAddress, lineAddress, repayAmount, poolData, lineData, noteSize, sendTx, log, fetchPool, fetchLine]);
 
   const handleSettle = useCallback(async () => {
     if (!poolAddress || !lineAddress) return;
@@ -466,7 +493,7 @@ export function RealApp() {
       const envelope = createShieldedEnvelope({
         sender: wallet.publicKey,
         recipient: new PublicKey(lineAddress),
-        amount: drawCount * noteSize,
+        amount: drawAmount,
         noteSizeUsd: noteSize,
         creditLineId: lineAddress,
       });
@@ -480,7 +507,7 @@ export function RealApp() {
       log(`  Receipt verified: ${valid ? "YES ✓" : "NO ✗"}`);
     } catch (e: any) { log(`Shielded settlement failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, lineAddress, drawCount, noteSize, log]);
+  }, [wallet.publicKey, lineAddress, drawAmount, noteSize, log]);
 
   /* ================================================================ */
   /*  MAGICBLOCK TAB ACTIONS                                          */
@@ -566,9 +593,9 @@ export function RealApp() {
         </div>
       ) : (
         <>
-          {/* Quick state bar */}
+          {/* Quick state bar — fixed at top */}
           {(poolAddress || lineAddress) && (
-            <div className="flex gap-3 mb-6 flex-wrap">
+            <div className="flex gap-3 mb-6 flex-wrap sticky top-0 z-10 bg-paper/95 backdrop-blur-sm py-2">
               {poolAddress && <div className="card px-3 py-2 mono text-xs"><span className="text-muted">Pool:</span> <span className="text-red">{poolAddress.slice(0, 8)}...{poolAddress.slice(-4)}</span>
                 <button onClick={() => fetchPool()} className="ml-2 text-muted hover:text-red">↻</button>
               </div>}
@@ -602,23 +629,32 @@ export function RealApp() {
 
               {/* INTERACT */}
               {tab === "interact" && (<>
+                {/* Privacy toggle */}
+                <div className="card p-3 flex items-center justify-between">
+                  <span className="text-xs text-muted">Note values: {showPrivateValues ? "🔓 Private view (you only)" : "🔒 Encrypted on-chain"}</span>
+                  <button onClick={() => setShowPrivateValues(v => !v)} className="text-xs text-red hover:underline">{showPrivateValues ? "Hide values" : "Show values"}</button>
+                </div>
                 <ActionCard step="01" title="Initialize Pool" disabled={busy}>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <Field label="Note Size (USD)" value={noteSize} onChange={setNoteSize} />
-                    <Field label="Limit (notes)" value={limitNotes} onChange={setLimitNotes} />
+                    <Field label="Credit Limit (notes)" value={limitNotes} onChange={setLimitNotes} />
                   </div>
+                  <p className="text-xs text-muted mb-3">Total credit: ${(noteSize * limitNotes).toLocaleString()} — each note is ${noteSize.toLocaleString()} with encrypted value</p>
                   <button onClick={handleInitPool} disabled={busy} className="btn-primary text-sm w-full">Create Pool</button>
                 </ActionCard>
                 <ActionCard step="02" title="Approve Credit Line" disabled={busy || !poolAddress}>
-                  <button onClick={handleApprove} disabled={busy || !poolAddress} className="btn-primary text-sm w-full">{!poolAddress ? "Create pool first" : "Approve Credit Line"}</button>
+                  <p className="text-xs text-muted mb-3">{!poolAddress ? "Create pool first" : `Pool limit: ${poolData?.totalLimitNotes ?? limitNotes} notes ($${((poolData?.totalLimitNotes ?? limitNotes) * (poolData?.noteSizeUsd ?? noteSize)).toLocaleString()})`}</p>
+                  <button onClick={handleApprove} disabled={busy || !poolAddress} className="btn-primary text-sm w-full">{!poolAddress ? "Create pool first" : `Approve ${limitNotes} Notes ($${(limitNotes * (poolData?.noteSizeUsd ?? noteSize)).toLocaleString()})`}</button>
                 </ActionCard>
-                <ActionCard step="03" title="Draw Notes" disabled={busy || !lineAddress}>
-                  <Field label="Notes to draw" value={drawCount} onChange={setDrawCount} min={1} max={lineData?.limitNotes || 50} />
-                  <button onClick={handleDraw} disabled={busy || !lineAddress} className="btn-primary text-sm w-full mt-3">{!lineAddress ? "No credit line" : `Draw ${drawCount} Note${drawCount > 1 ? "s" : ""}`}</button>
+                <ActionCard step="03" title="Draw Credit" disabled={busy || !lineAddress}>
+                  <Field label={`Amount (min $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()})`} value={drawAmount} onChange={setDrawAmount} min={poolData?.noteSizeUsd ?? 1000} max={(lineData?.limitNotes ?? 50) * (poolData?.noteSizeUsd ?? 1000)} />
+                  <p className="text-xs text-muted mt-1 mb-3">{!lineAddress ? "No credit line" : drawAmount < (poolData?.noteSizeUsd ?? noteSize) ? `⚠ Minimum is $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()}` : `${Math.floor(drawAmount / (poolData?.noteSizeUsd ?? noteSize))} notes × $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()} = $${(Math.floor(drawAmount / (poolData?.noteSizeUsd ?? noteSize)) * (poolData?.noteSizeUsd ?? noteSize)).toLocaleString()} • Values encrypted`}</p>
+                  <button onClick={handleDraw} disabled={busy || !lineAddress || drawAmount < (poolData?.noteSizeUsd ?? noteSize)} className="btn-primary text-sm w-full">{!lineAddress ? "No credit line" : drawAmount < (poolData?.noteSizeUsd ?? noteSize) ? `Min $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()}` : `Draw ${Math.floor(drawAmount / (poolData?.noteSizeUsd ?? noteSize))} Notes ($${(Math.floor(drawAmount / (poolData?.noteSizeUsd ?? noteSize)) * (poolData?.noteSizeUsd ?? noteSize)).toLocaleString()})`}</button>
                 </ActionCard>
-                <ActionCard step="04" title="Repay Notes" disabled={busy || !lineAddress}>
-                  <Field label="Notes to repay" value={repayCount} onChange={setRepayCount} min={1} max={lineData?.drawnNotes || 10} />
-                  <button onClick={handleRepay} disabled={busy || !lineAddress} className="btn-primary text-sm w-full mt-3">{!lineAddress ? "No credit line" : `Repay ${repayCount} Note${repayCount > 1 ? "s" : ""}`}</button>
+                <ActionCard step="04" title="Repay Credit" disabled={busy || !lineAddress}>
+                  <Field label={`Amount (min $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()})`} value={repayAmount} onChange={setRepayAmount} min={poolData?.noteSizeUsd ?? 1000} max={((lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0)) * (poolData?.noteSizeUsd ?? 1000)} />
+                  <p className="text-xs text-muted mt-1 mb-3">{!lineAddress ? "No credit line" : (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0) === 0 ? "⚠ Draw credit first!" : repayAmount < (poolData?.noteSizeUsd ?? noteSize) ? `⚠ Minimum is $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()}` : `${Math.min(Math.floor(repayAmount / (poolData?.noteSizeUsd ?? noteSize)), (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0))} notes • Shielded settlement`}</p>
+                  <button onClick={handleRepay} disabled={busy || !lineAddress || repayAmount < (poolData?.noteSizeUsd ?? noteSize)} className="btn-primary text-sm w-full">{!lineAddress ? "No credit line" : (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0) === 0 ? "Draw first" : repayAmount < (poolData?.noteSizeUsd ?? noteSize) ? `Min $${(poolData?.noteSizeUsd ?? noteSize).toLocaleString()}` : `Repay ${Math.min(Math.floor(repayAmount / (poolData?.noteSizeUsd ?? noteSize)), (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0))} Notes`}</button>
                 </ActionCard>
                 <ActionCard step="05" title="Settle Maturity" disabled={busy || !lineAddress}>
                   <button onClick={handleSettle} disabled={busy || !lineAddress} className="btn-primary text-sm w-full">Settle</button>
@@ -750,15 +786,15 @@ export function RealApp() {
               </>)}
             </div>
 
-            {/* RIGHT: log + state panels */}
-            <div className="space-y-4">
-              {/* Execution log */}
-              <div className="bg-paper rounded-xl border border-line overflow-hidden sticky top-20">
-                <div className="px-4 py-3 border-b border-line flex justify-between">
+            {/* RIGHT: fixed-height panel with log + on-chain state */}
+            <div className="bg-paper rounded-xl border border-line overflow-hidden sticky top-20" style={{ maxHeight: "calc(100vh - 6rem)" }}>
+              <div className="flex flex-col h-full">
+                {/* Log section */}
+                <div className="px-4 py-3 border-b border-line flex justify-between shrink-0">
                   <span className="mono text-[10px] text-muted uppercase">Transaction Log</span>
                   <span className="mono text-[10px] text-muted">{logs.length}</span>
                 </div>
-                <div className="p-4 h-[350px] overflow-y-auto space-y-1.5 mono text-xs">
+                <div className="p-4 h-[280px] overflow-y-auto space-y-1.5 mono text-xs shrink-0">
                   {logs.length === 0 ? <p className="text-muted text-center py-8">Execute a transaction to see results</p> :
                     logs.map((l, i) => {
                       const urlMatch = l.match(/(https:\/\/explorer\.solana\.com\/[^\s]+)/);
@@ -774,29 +810,36 @@ export function RealApp() {
                       );
                     })}
                 </div>
-              </div>
 
-              {/* On-chain state panels */}
-              {poolData && (
-                <div className="card p-5">
-                  <h4 className="font-bold mb-3">Pool: {poolStatusLabel(poolData.status)}</h4>
-                  <div className="grid grid-cols-3 gap-2 mono text-xs">
-                    {[{ l: "Note Size", v: `$${poolData.noteSizeUsd}` }, { l: "Limit", v: `${poolData.totalLimitNotes}` }, { l: "Drawn", v: `${poolData.totalDrawnNotes}` },
-                      { l: "Repaid", v: `${poolData.totalRepaidNotes}` }, { l: "Defaulted", v: `${poolData.totalDefaultedNotes}` }, { l: "Interest", v: `${poolData.interestBps}bps` }
-                    ].map(d => <div key={d.l} className="bg-bg rounded p-2"><p className="text-muted text-[10px]">{d.l}</p><p className="mt-0.5">{d.v}</p></div>)}
+                {/* On-chain state — inside the same fixed panel */}
+                {poolData && (
+                  <div className="border-t border-line p-4 shrink-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-bold text-xs">Pool: {poolStatusLabel(poolData.status)}</h4>
+                      <span className="text-[10px] text-muted">🔒 encrypted</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 mono text-[11px]">
+                      {[{ l: "Value", v: showPrivateValues ? `$${poolData.noteSizeUsd}` : "••••" }, { l: "Limit", v: `${poolData.totalLimitNotes}` }, { l: "Drawn", v: `${poolData.totalDrawnNotes}` },
+                        { l: "Repaid", v: `${poolData.totalRepaidNotes}` }, { l: "Default", v: `${poolData.totalDefaultedNotes}` }, { l: "Outst.", v: `${poolData.outstandingNotes}` }
+                      ].map(d => <div key={d.l} className="bg-bg rounded px-2 py-1"><p className="text-muted text-[9px]">{d.l}</p><p>{d.v}</p></div>)}
+                    </div>
                   </div>
-                </div>
-              )}
-              {lineData && (
-                <div className="card p-5">
-                  <h4 className="font-bold mb-3">Credit Line: {statusLabel(lineData.status)}</h4>
-                  <div className="grid grid-cols-3 gap-2 mono text-xs">
-                    {[{ l: "Note Size", v: `$${lineData.noteSizeUsd}` }, { l: "Limit", v: `${lineData.limitNotes}` }, { l: "Drawn", v: `${lineData.drawnNotes}` },
-                      { l: "Repaid", v: `${lineData.repaidNotes}` }, { l: "Outstanding", v: `${lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes}` }, { l: "Total Credit", v: `$${(lineData.limitNotes * lineData.noteSizeUsd).toLocaleString()}` }
-                    ].map(d => <div key={d.l} className="bg-bg rounded p-2"><p className="text-muted text-[10px]">{d.l}</p><p className="mt-0.5">{d.v}</p></div>)}
+                )}
+                {lineData && (
+                  <div className="border-t border-line p-4 shrink-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-bold text-xs">Line: {statusLabel(lineData.status)}</h4>
+                      <span className="text-[10px] text-muted">🔒 encrypted</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5 mono text-[11px]">
+                      {[{ l: "Value", v: showPrivateValues ? `$${lineData.noteSizeUsd}` : "••••" }, { l: "Limit", v: `${lineData.limitNotes}` }, { l: "Drawn", v: `${lineData.drawnNotes}` },
+                        { l: "Repaid", v: `${lineData.repaidNotes}` }, { l: "Outst.", v: `${Math.max(0, lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes)}` },
+                        { l: "Credit", v: showPrivateValues ? `$${(lineData.limitNotes * lineData.noteSizeUsd).toLocaleString()}` : "••••" }
+                      ].map(d => <div key={d.l} className="bg-bg rounded px-2 py-1"><p className="text-muted text-[9px]">{d.l}</p><p>{d.v}</p></div>)}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </>

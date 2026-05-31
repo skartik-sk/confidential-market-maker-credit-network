@@ -117,6 +117,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <a href="#execute" className="hover:text-ink transition-colors">Execute</a>
             <a href="#privacy" className="hover:text-ink transition-colors">Privacy</a>
             <a href="#verify" className="hover:text-ink transition-colors">Verify</a>
+            <a href="/trade" className="hover:text-ink transition-colors font-medium text-red">Trade</a>
           </div>
         </div>
       </nav>

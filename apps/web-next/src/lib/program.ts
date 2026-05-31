@@ -8,9 +8,7 @@
 import {
   TransactionInstruction,
   PublicKey,
-  SystemProgram,
   Connection,
-  Transaction,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 
@@ -20,6 +18,15 @@ function writeU64LE(buf: Buffer, value: bigint | number, offset: number) {
   for (let i = 0; i < 8; i++) {
     buf[offset + i] = Number((v >> BigInt(i * 8)) & BigInt(0xFF));
   }
+}
+
+/* Browser-compatible u64 LE reader (readBigUInt64LE doesn't exist in browser) */
+function readU64LE(buf: Buffer | Uint8Array, offset: number): bigint {
+  let v = BigInt(0);
+  for (let i = 0; i < 8; i++) {
+    v += BigInt(buf[offset + i]) << BigInt(i * 8);
+  }
+  return v;
 }
 
 export const PROGRAM_ID = new PublicKey(
@@ -128,9 +135,8 @@ export function createInitializePoolIx(params: {
 
   return new TransactionInstruction({
     keys: [
-      { pubkey: params.pool, isSigner: false, isWritable: true },
       { pubkey: params.admin, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: params.pool, isSigner: false, isWritable: true },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),
@@ -161,10 +167,9 @@ export function createApproveCreditLineIx(params: {
 
   return new TransactionInstruction({
     keys: [
+      { pubkey: params.underwriter, isSigner: true, isWritable: true },
       { pubkey: params.pool, isSigner: false, isWritable: true },
       { pubkey: params.creditLine, isSigner: false, isWritable: true },
-      { pubkey: params.underwriter, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),
@@ -187,9 +192,9 @@ export function createDrawTrancheIx(params: {
 
   return new TransactionInstruction({
     keys: [
+      { pubkey: params.borrower, isSigner: true, isWritable: false },
       { pubkey: params.pool, isSigner: false, isWritable: true },
       { pubkey: params.creditLine, isSigner: false, isWritable: true },
-      { pubkey: params.borrower, isSigner: true, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),
@@ -212,9 +217,9 @@ export function createRepayTrancheIx(params: {
 
   return new TransactionInstruction({
     keys: [
+      { pubkey: params.borrower, isSigner: true, isWritable: false },
       { pubkey: params.pool, isSigner: false, isWritable: true },
       { pubkey: params.creditLine, isSigner: false, isWritable: true },
-      { pubkey: params.borrower, isSigner: true, isWritable: false },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),
@@ -255,8 +260,8 @@ export function createPauseLineIx(params: {
 
   return new TransactionInstruction({
     keys: [
-      { pubkey: params.creditLine, isSigner: false, isWritable: true },
       { pubkey: params.underwriter, isSigner: true, isWritable: false },
+      { pubkey: params.creditLine, isSigner: false, isWritable: true },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),
@@ -279,7 +284,7 @@ export function parsePoolAccount(data: Buffer) {
   const auditor = new PublicKey(data.subarray(offset, offset + 32)); offset += 32;
   const reserveMint = new PublicKey(data.subarray(offset, offset + 32)); offset += 32;
   const vault = new PublicKey(data.subarray(offset, offset + 32)); offset += 32;
-  const noteSizeUsd = Number(data.readBigUInt64LE(offset)); offset += 8;
+  const noteSizeUsd = Number(readU64LE(data, offset)); offset += 8;
   const totalLimitNotes = data.readUInt32LE(offset); offset += 4;
   const allocatedLimitNotes = data.readUInt32LE(offset); offset += 4;
   const outstandingNotes = data.readUInt32LE(offset); offset += 4;
@@ -287,8 +292,8 @@ export function parsePoolAccount(data: Buffer) {
   const totalRepaidNotes = data.readUInt32LE(offset); offset += 4;
   const totalDefaultedNotes = data.readUInt32LE(offset); offset += 4;
   const interestBps = data.readUInt16LE(offset); offset += 2;
-  const maturitySlot = Number(data.readBigUInt64LE(offset)); offset += 8;
-  const receiptIntervalSlots = Number(data.readBigUInt64LE(offset)); offset += 8;
+  const maturitySlot = Number(readU64LE(data, offset)); offset += 8;
+  const receiptIntervalSlots = Number(readU64LE(data, offset)); offset += 8;
   const privacyPolicy = data.readUInt8(offset) as PrivacyPolicy;
 
   return {
@@ -312,11 +317,11 @@ export function parseCreditLineAccount(data: Buffer) {
   const drawnNotes = data.readUInt32LE(offset); offset += 4;
   const repaidNotes = data.readUInt32LE(offset); offset += 4;
   const defaultedNotes = data.readUInt32LE(offset); offset += 4;
-  const noteSizeUsd = Number(data.readBigUInt64LE(offset)); offset += 8;
+  const noteSizeUsd = Number(readU64LE(data, offset)); offset += 8;
   const interestBps = data.readUInt16LE(offset); offset += 2;
-  const openedSlot = Number(data.readBigUInt64LE(offset)); offset += 8;
-  const maturitySlot = Number(data.readBigUInt64LE(offset)); offset += 8;
-  const lastReceiptSlot = Number(data.readBigUInt64LE(offset)); offset += 8;
+  const openedSlot = Number(readU64LE(data, offset)); offset += 8;
+  const maturitySlot = Number(readU64LE(data, offset)); offset += 8;
+  const lastReceiptSlot = Number(readU64LE(data, offset)); offset += 8;
   const termsHash = new PublicKey(data.subarray(offset, offset + 32)); offset += 32;
   const mandateHash = new PublicKey(data.subarray(offset, offset + 32)); offset += 32;
   const privacyPolicy = data.readUInt8(offset) as PrivacyPolicy;
