@@ -295,8 +295,18 @@ export async function getDelegationStatus(
   const data = accountInfo.data;
   let offset = 8; // skip discriminator
 
+  // Bounds check: need at least 4 bytes for commit_frequency_ms
+  if (offset + 4 > data.length) {
+    return { delegated: false, recordAddress, validator: null, commitFrequencyMs: null, slot: null };
+  }
+
   const commitFrequencyMs = data.readUInt32LE(offset);
   offset += 4;
+
+  // Bounds check: need 1 byte for seeds_length
+  if (offset + 1 > data.length) {
+    return { delegated: false, recordAddress, validator: null, commitFrequencyMs, slot: null };
+  }
 
   // Skip past seed info to find the validator field.
   // Layout after commit_frequency_ms:
@@ -305,9 +315,16 @@ export async function getDelegationStatus(
   offset += 1;
 
   for (let i = 0; i < seedsLength; i++) {
+    if (offset + 1 > data.length) break; // bounds check before reading seed_len
     const seedLen = data.readUInt8(offset);
     offset += 1;
+    if (offset + seedLen > data.length) break; // bounds check before skipping seed_data
     offset += seedLen;
+  }
+
+  // Bounds check: need 1 byte for is_some
+  if (offset + 1 > data.length) {
+    return { delegated: true, recordAddress, validator: null, commitFrequencyMs, slot: null };
   }
 
   const isSome = data.readUInt8(offset);

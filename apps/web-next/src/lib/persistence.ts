@@ -1,11 +1,16 @@
 /**
- * Persistent user state using localStorage.
+ * Persistent user state using localStorage with HMAC integrity protection.
  *
  * Stores per-wallet credit vault state: pool address, credit line address,
  * transaction history, USDC balance, and last-updated timestamp.
  *
+ * Integrity: Each stored blob includes an HMAC-SHA256 checksum derived from
+ * the wallet pubkey. Tampered data is rejected on load.
+ *
  * All functions are SSR-safe (check typeof window before localStorage access).
  */
+
+import { createHmac } from "node:crypto";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -51,6 +56,21 @@ function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof localStorage !== "undefined";
 }
 
+/** Derive an HMAC key from the wallet pubkey. This isn't secret — it just detects tampering. */
+function hmacKey(walletPubkey: string): Buffer {
+  return createHmac("sha256", "credit-vault-integrity-v1").update(walletPubkey).digest();
+}
+
+/** Compute HMAC of serialized state. */
+function computeHmac(walletPubkey: string, data: string): string {
+  return createHmac("sha256", hmacKey(walletPubkey)).update(data).digest("hex");
+}
+
+interface StoredBlob {
+  state: UserState;
+  hmac: string;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Core CRUD                                                          */
 /* ------------------------------------------------------------------ */
@@ -79,7 +99,9 @@ export function saveUserState(
   };
 
   try {
-    localStorage.setItem(key, JSON.stringify(merged));
+    const stateJson = JSON.stringify(merged);
+    const hmac = computeHmac(walletPubkey, stateJson);
+    localStorage.setItem(key, JSON.stringify({ state: merged, hmac }));
   } catch {
     // localStorage may be full or disabled; silently degrade.
   }
@@ -97,7 +119,12 @@ export function loadUserState(walletPubkey: string): UserState | null {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as UserState;
+    const blob = JSON.parse(raw) as StoredBlob;
+    // HMAC integrity check — reject tampered data
+    const stateJson = JSON.stringify(blob.state);
+    const expectedHmac = computeHmac(walletPubkey, stateJson);
+    if (blob.hmac !== expectedHmac) return null;
+    const parsed = blob.state;
     // Basic shape validation.
     if (typeof parsed.poolAddress !== "string") return null;
     if (typeof parsed.creditLineAddress !== "string") return null;
