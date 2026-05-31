@@ -3,6 +3,12 @@
  * Variable note sizes for privacy — each note has a DIFFERENT value.
  * Only the user and platform can see individual note values.
  * Public view shows only NOTE COUNT, not values.
+ *
+ * PRODUCTION NOTE: In production, privateNotes must NEVER be sent to
+ * unauthorized clients. Split into separate endpoints:
+ *   GET /api/credit-line/{id}           → public data (note count, status)
+ *   GET /api/credit-line/{id}/private   → requires wallet auth, returns note values
+ * The settlement noteValue fields should also be gated behind auth.
  */
 
 import { createCipheriv, createHash, randomBytes } from "node:crypto";

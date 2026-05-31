@@ -42,7 +42,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [showPrivate, setShowPrivate] = useState(false); // toggle private note values
+  const [showPrivate, setShowPrivate] = useState(false); // DEMO ONLY: toggles public/private note view. In production, private notes are fetched from an authenticated endpoint — never sent to unauthorized clients.
 
   useEffect(() => {
     (async () => {
