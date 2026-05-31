@@ -33,6 +33,34 @@ import {
   DEVNET_USDC_MINT,
   DEVNET_USDC_FAUCET_URL,
 } from "@/lib/usdc";
+
+/** Build transfer/deposit instructions using ANY mint (not hardcoded USDC) */
+async function buildTokenTransferIx(
+  from: PublicKey,
+  to: PublicKey,
+  mint: PublicKey,
+  amountUi: number,
+  decimals: number = 6,
+): Promise<{ instructions: any[]; fromAta: PublicKey; toAta: PublicKey }> {
+  const { createTransferInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } = await import("@solana/spl-token");
+  const fromAta = getAssociatedTokenAddressSync(mint, from);
+  const toAta = getAssociatedTokenAddressSync(mint, to);
+  const rawAmount = BigInt(Math.round(amountUi * 10 ** decimals));
+  const instructions: any[] = [];
+  instructions.push(createAssociatedTokenAccountInstruction(from, toAta, to, mint));
+  instructions.push(createTransferInstruction(fromAta, toAta, from, rawAmount));
+  return { instructions, fromAta, toAta };
+}
+
+/** Get token balance for any mint */
+async function getTokenBalance(connection: any, owner: PublicKey, mint: PublicKey): Promise<number> {
+  try {
+    const { getAssociatedTokenAddressSync, getAccount } = await import("@solana/spl-token");
+    const ata = getAssociatedTokenAddressSync(mint, owner);
+    const account = await getAccount(connection, ata);
+    return Number(account.amount) / 1e6;
+  } catch { return 0; }
+}
 import { computeRiskScore, verifyRiskCommitment, RiskEngine } from "@/lib/risk-engine";
 import {
   createShieldedEnvelope,
@@ -85,6 +113,7 @@ export function RealApp() {
   const [tab, setTab] = useState<Tab>("interact");
   const [txHistory, setTxHistory] = useState<TxRecord[]>([]);
   const [usdcBal, setUsdcBal] = useState<number>(0);
+  const [testTokenMint, setTestTokenMint] = useState<string>("");
   const [depositAmount, setDepositAmount] = useState(1000);
   const [riskEngine] = useState(() => new RiskEngine({ maxDrawdownBps: 1200, maxDailySpendUsd: 2500 }));
   const [riskResult, setRiskResult] = useState<any>(null);
@@ -128,20 +157,21 @@ export function RealApp() {
     saveUserState(wallet.publicKey.toBase58(), { poolAddress, creditLineAddress: lineAddress });
   }, [poolAddress, lineAddress, wallet.publicKey]);
 
-  /* --- Auto-fetch USDC balance --- */
+  /* --- Auto-fetch token balance --- */
   useEffect(() => {
     if (!connected || !wallet.publicKey) return;
     let active = true;
     const poll = async () => {
       if (!active || !wallet.publicKey) return;
       try {
-        const bal = await getUsdcBalanceReadOnly(connection, wallet.publicKey);
+        const mint = testTokenMint ? new PublicKey(testTokenMint) : DEVNET_USDC_MINT;
+        const bal = await getTokenBalance(connection, wallet.publicKey, mint);
         if (active) { setUsdcBal(bal); setTimeout(poll, 15000); }
       } catch { if (active) setTimeout(poll, 20000); }
     };
     poll();
     return () => { active = false; };
-  }, [connected, wallet.publicKey, connection]);
+  }, [connected, wallet.publicKey, connection, testTokenMint]);
 
   /* --- Send transaction helper --- */
   const sendTx = useCallback(async (ix: any, type: string) => {
@@ -207,7 +237,7 @@ export function RealApp() {
       const sig = await connection.requestAirdrop(wallet.publicKey, 2 * LAMPORTS_PER_SOL);
       await connection.confirmTransaction(sig, "confirmed");
       const bal = await connection.getBalance(wallet.publicKey);
-      log(`Airdrop done! Balance: ${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+      log(`Airdrop done! Balance: ${(bal / LAMPORTS_PER_SOL).toFixed(4)} SOL → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await recordTx(sig, "airdrop");
     } catch (e: any) { log(`Airdrop failed: ${e.message}`); }
     setBusy(false);
@@ -247,7 +277,7 @@ export function RealApp() {
         }),
         ix,
       ], "init_pool", [poolKp]);
-      log(`Pool created! ${sig.slice(0, 16)}...`);
+      log(`Pool created! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(addr);
     } catch (e: any) { log(`Init pool failed: ${e.message}`); }
     setBusy(false);
@@ -283,7 +313,7 @@ export function RealApp() {
         }),
         ix,
       ], "approve_line", [lineKp]);
-      log(`Line approved! ${sig.slice(0, 16)}...`);
+      log(`Line approved! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchLine(addr);
     } catch (e: any) { log(`Approve failed: ${e.message}`); }
     setBusy(false);
@@ -296,7 +326,7 @@ export function RealApp() {
       const slot = await connection.getSlot("confirmed");
       const ix = createDrawTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes: drawCount, currentSlot: slot });
       const sig = await sendTx(ix, "draw");
-      log(`Drew ${drawCount} note(s)! ${sig.slice(0, 16)}...`);
+      log(`Drew ${drawCount} note(s)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(); await fetchLine();
     } catch (e: any) { log(`Draw failed: ${e.message}`); }
     setBusy(false);
@@ -309,7 +339,7 @@ export function RealApp() {
       const slot = await connection.getSlot("confirmed");
       const ix = createRepayTrancheIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), borrower: wallet.publicKey, notes: repayCount, currentSlot: slot });
       const sig = await sendTx(ix, "repay");
-      log(`Repaid ${repayCount} note(s)! ${sig.slice(0, 16)}...`);
+      log(`Repaid ${repayCount} note(s)! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(); await fetchLine();
     } catch (e: any) { log(`Repay failed: ${e.message}`); }
     setBusy(false);
@@ -322,7 +352,7 @@ export function RealApp() {
       const slot = await connection.getSlot("confirmed");
       const ix = createSettleMaturityIx({ pool: new PublicKey(poolAddress), creditLine: new PublicKey(lineAddress), currentSlot: slot });
       const sig = await sendTx(ix, "settle");
-      log(`Settled! ${sig.slice(0, 16)}...`);
+      log(`Settled! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool(); await fetchLine();
     } catch (e: any) { log(`Settle failed: ${e.message}`); }
     setBusy(false);
@@ -336,10 +366,6 @@ export function RealApp() {
     if (!wallet.publicKey) return;
     setBusy(true);
     try {
-      log("Getting devnet USDC from faucet...");
-      log(`Open this URL in browser: ${DEVNET_USDC_FAUCET_URL}`);
-      log("Or: create a test SPL token below (you are mint authority)");
-      // Create a test token where user has mint authority
       const { Keypair, SystemProgram } = await import("@solana/web3.js");
       const { createInitializeMintInstruction, createMintToInstruction, createAssociatedTokenAccountInstruction, getAssociatedTokenAddressSync, MINT_SIZE, TOKEN_PROGRAM_ID } = await import("@solana/spl-token");
       const mintKp = Keypair.generate();
@@ -352,40 +378,47 @@ export function RealApp() {
         createAssociatedTokenAccountInstruction(wallet.publicKey, ata, wallet.publicKey, mintKp.publicKey, TOKEN_PROGRAM_ID),
         createMintToInstruction(mintKp.publicKey, ata, wallet.publicKey, 10_000_000_000, [], TOKEN_PROGRAM_ID),
       ], "mint_test_token", [mintKp]);
-      log(`Test token minted! ${sig.slice(0, 16)}...`);
-      log(`Balance: 10,000 test USDC at mint ${mintKp.publicKey.toBase58().slice(0, 12)}...`);
+      const mintAddr = mintKp.publicKey.toBase58();
+      setTestTokenMint(mintAddr);
+      log(`Minted 10,000 tokens! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`Token: ${mintAddr.slice(0, 20)}...`);
+      const bal = await getTokenBalance(connection, wallet.publicKey, mintKp.publicKey);
+      setUsdcBal(bal);
     } catch (e: any) { log(`Mint failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, connection, log, recordTx, sendTxBatch]);
+  }, [wallet.publicKey, connection, log, sendTxBatch]);
 
   const handleDepositUsdc = useCallback(async () => {
     if (!wallet.publicKey) return;
+    if (!testTokenMint) { log("Mint test tokens first!"); return; }
     setBusy(true);
     try {
-      log(`Depositing $${depositAmount.toLocaleString()} USDC as collateral...`);
-      const { instructions } = await buildDepositIx(wallet.publicKey, wallet.publicKey, depositAmount);
+      const mint = new PublicKey(testTokenMint);
+      log(`Depositing $${depositAmount.toLocaleString()} as collateral...`);
+      const { instructions } = await buildTokenTransferIx(wallet.publicKey, wallet.publicKey, mint, depositAmount);
       const sig = await sendTxBatch(instructions, "deposit_usdc");
-      log(`Deposited! ${sig.slice(0, 16)}...`);
-      const bal = await getUsdcBalanceReadOnly(connection, wallet.publicKey);
+      log(`Deposited $${depositAmount.toLocaleString()}! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      const bal = await getTokenBalance(connection, wallet.publicKey, mint);
       setUsdcBal(bal);
     } catch (e: any) { log(`Deposit failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, connection, depositAmount, log, sendTxBatch]);
+  }, [wallet.publicKey, connection, depositAmount, testTokenMint, log, sendTxBatch]);
 
   const handleWithdrawUsdc = useCallback(async () => {
     if (!wallet.publicKey) return;
+    if (!testTokenMint) { log("Mint test tokens first!"); return; }
     setBusy(true);
     try {
-      log(`Withdrawing $${depositAmount.toLocaleString()} USDC...`);
-      // Withdraw is just a transfer from vault ATA back to user ATA
-      const { instructions } = await buildDepositIx(wallet.publicKey, wallet.publicKey, depositAmount);
+      const mint = new PublicKey(testTokenMint);
+      log(`Withdrawing $${depositAmount.toLocaleString()}...`);
+      const { instructions } = await buildTokenTransferIx(wallet.publicKey, wallet.publicKey, mint, depositAmount);
       const sig = await sendTxBatch(instructions, "withdraw_usdc");
-      log(`Withdrawn! ${sig.slice(0, 16)}...`);
-      const bal = await getUsdcBalanceReadOnly(connection, wallet.publicKey);
+      log(`Withdrawn $${depositAmount.toLocaleString()}! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      const bal = await getTokenBalance(connection, wallet.publicKey, mint);
       setUsdcBal(bal);
     } catch (e: any) { log(`Withdraw failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, connection, depositAmount, log, sendTxBatch]);
+  }, [wallet.publicKey, connection, depositAmount, testTokenMint, log, sendTxBatch]);
 
   /* ================================================================ */
   /*  RISK TAB ACTIONS                                                */
@@ -463,7 +496,7 @@ export function RealApp() {
         validator: VALIDATOR_ASIA,
       });
       const sig = await sendTx(ix, "delegate_mb");
-      log(`Delegated! ${sig.slice(0, 16)}...`);
+      log(`Delegated! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       log(`  ER RPC: ${ER_RPC_URL}`);
     } catch (e: any) { log(`Delegation failed: ${e.message}`); }
     setBusy(false);
@@ -476,7 +509,7 @@ export function RealApp() {
       log("Committing credit line state...");
       const ix = commitCreditLine({ creditLine: new PublicKey(lineAddress), owner: wallet.publicKey, programId: PROGRAM_ID });
       const sig = await sendTx(ix, "commit_mb");
-      log(`Committed! ${sig.slice(0, 16)}...`);
+      log(`Committed! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchLine();
     } catch (e: any) { log(`Commit failed: ${e.message}`); }
     setBusy(false);
@@ -489,7 +522,7 @@ export function RealApp() {
       log("Committing and undelegating...");
       const ix = commitAndUndelegate({ creditLine: new PublicKey(lineAddress), owner: wallet.publicKey, programId: PROGRAM_ID });
       const sig = await sendTx(ix, "undelegate_mb");
-      log(`Undelegated! ${sig.slice(0, 16)}...`);
+      log(`Undelegated! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchLine();
     } catch (e: any) { log(`Undelegate failed: ${e.message}`); }
     setBusy(false);
@@ -724,7 +757,19 @@ export function RealApp() {
                 </div>
                 <div className="p-4 h-[350px] overflow-y-auto space-y-1.5 mono text-xs">
                   {logs.length === 0 ? <p className="text-muted text-center py-8">Execute a transaction to see results</p> :
-                    logs.map((l, i) => <div key={i} className="bg-bg rounded px-3 py-2 animate-slide">{l}</div>)}
+                    logs.map((l, i) => {
+                      const urlMatch = l.match(/(https:\/\/explorer\.solana\.com\/[^\s]+)/);
+                      return (
+                        <div key={i} className="bg-bg rounded px-3 py-2 animate-slide">
+                          {urlMatch ? (
+                            <>
+                              {l.replace(urlMatch[1], "")}
+                              <a href={urlMatch[1]} target="_blank" rel="noopener noreferrer" className="text-red hover:underline">Explorer →</a>
+                            </>
+                          ) : l}
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
 
