@@ -109,7 +109,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <div className="w-[30px] h-[30px] border border-line rounded-lg bg-paper relative">
               <div className="absolute inset-2 rotate-45" style={{ background: "#dc2b28", borderRadius: "2px" }} />
             </div>
-            <span className="font-bold text-lg">credit-vault</span>
+            <span className="font-bold text-lg">Mute</span>
             {onchain?.live && <span className="text-[10px] mono px-2 py-0.5 rounded-full state-pill animate-glow">DEVNET LIVE</span>}
           </div>
           <div className="flex items-center gap-6 text-sm text-muted">
@@ -417,7 +417,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <div className="w-5 h-5 border border-line rounded bg-paper relative">
               <div className="absolute inset-1 rotate-45" style={{ background: "#dc2b28", borderRadius: "1px" }} />
             </div>
-            credit-vault — Confidential Credit on Solana
+            Mute — Confidential Credit on Solana
           </div>
           <div className="flex gap-4 mono text-xs text-muted">
             <a href="/api/demo/protocol" className="hover:text-red transition-colors">Protocol</a>

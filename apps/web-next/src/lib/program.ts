@@ -14,6 +14,14 @@ import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 
+/* Browser-compatible u64 LE writer (writeBigUInt64LE doesn't exist in browser) */
+function writeU64LE(buf: Buffer, value: bigint | number, offset: number) {
+  const v = BigInt(value);
+  for (let i = 0; i < 8; i++) {
+    buf[offset + i] = Number((v >> BigInt(i * 8)) & BigInt(0xFF));
+  }
+}
+
 export const PROGRAM_ID = new PublicKey(
   "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5",
 );
@@ -112,11 +120,11 @@ export function createInitializePoolIx(params: {
   data.set(params.auditor.toBuffer(), offset); offset += 32;
   data.set(params.reserveMint.toBuffer(), offset); offset += 32;
   data.set(params.vault.toBuffer(), offset); offset += 32;
-  data.writeBigUInt64LE(BigInt(params.noteSizeUsd), offset); offset += 8;
+  writeU64LE(data, BigInt(params.noteSizeUsd), offset); offset += 8;
   data.writeUInt32LE(params.totalLimitNotes, offset); offset += 4;
   data.writeUInt16LE(params.interestBps, offset); offset += 2;
-  data.writeBigUInt64LE(BigInt(params.maturitySlot), offset); offset += 8;
-  data.writeBigUInt64LE(BigInt(params.receiptIntervalSlots), offset); offset += 8;
+  writeU64LE(data, BigInt(params.maturitySlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.receiptIntervalSlots), offset); offset += 8;
 
   return new TransactionInstruction({
     keys: [
@@ -148,8 +156,8 @@ export function createApproveCreditLineIx(params: {
   data.writeUInt32LE(params.limitNotes, offset); offset += 4;
   data.set(params.termsHash.toBuffer(), offset); offset += 32;
   data.set(params.mandateHash.toBuffer(), offset); offset += 32;
-  data.writeBigUInt64LE(BigInt(params.openedSlot), offset); offset += 8;
-  data.writeBigUInt64LE(BigInt(params.maturitySlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.openedSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.maturitySlot), offset); offset += 8;
 
   return new TransactionInstruction({
     keys: [
@@ -175,7 +183,7 @@ export function createDrawTrancheIx(params: {
   let offset = 0;
   data.writeUInt8(2, offset); offset += 1; // tag
   data.writeUInt32LE(params.notes, offset); offset += 4;
-  data.writeBigUInt64LE(BigInt(params.currentSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.currentSlot), offset); offset += 8;
 
   return new TransactionInstruction({
     keys: [
@@ -200,7 +208,7 @@ export function createRepayTrancheIx(params: {
   let offset = 0;
   data.writeUInt8(3, offset); offset += 1; // tag
   data.writeUInt32LE(params.notes, offset); offset += 4;
-  data.writeBigUInt64LE(BigInt(params.currentSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.currentSlot), offset); offset += 8;
 
   return new TransactionInstruction({
     keys: [
@@ -222,7 +230,7 @@ export function createSettleMaturityIx(params: {
   const data = Buffer.alloc(1 + 8);
   let offset = 0;
   data.writeUInt8(5, offset); offset += 1;
-  data.writeBigUInt64LE(BigInt(params.currentSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.currentSlot), offset); offset += 8;
 
   return new TransactionInstruction({
     keys: [

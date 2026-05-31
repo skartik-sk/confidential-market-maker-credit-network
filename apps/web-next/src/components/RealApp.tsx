@@ -42,13 +42,16 @@ async function buildTokenTransferIx(
   amountUi: number,
   decimals: number = 6,
 ): Promise<{ instructions: any[]; fromAta: PublicKey; toAta: PublicKey }> {
-  const { createTransferInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } = await import("@solana/spl-token");
+  const { createTransferInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } = await import("@solana/spl-token");
   const fromAta = getAssociatedTokenAddressSync(mint, from);
   const toAta = getAssociatedTokenAddressSync(mint, to);
   const rawAmount = BigInt(Math.round(amountUi * 10 ** decimals));
   const instructions: any[] = [];
-  instructions.push(createAssociatedTokenAccountInstruction(from, toAta, to, mint));
-  instructions.push(createTransferInstruction(fromAta, toAta, from, rawAmount));
+  // Only create destination ATA if from !== to (otherwise it already exists from mint)
+  if (from.toBase58() !== to.toBase58()) {
+    instructions.push(createAssociatedTokenAccountInstruction(from, toAta, to, mint, TOKEN_PROGRAM_ID));
+  }
+  instructions.push(createTransferInstruction(fromAta, toAta, from, rawAmount, [], TOKEN_PROGRAM_ID));
   return { instructions, fromAta, toAta };
 }
 
