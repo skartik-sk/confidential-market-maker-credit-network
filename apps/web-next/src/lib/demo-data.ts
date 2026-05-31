@@ -1,14 +1,16 @@
 /**
  * Self-contained demo data for Vercel deployment.
- * Fixed note sizes per credit line — real crypto, on-chain ready.
+ * Variable note sizes for privacy — each note has a DIFFERENT value.
+ * Only the user and platform can see individual note values.
+ * Public view shows only NOTE COUNT, not values.
  */
 
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 
 /* ------------------------------------------------------------------ */
-/*  Fixed-Value Note System                                            */
-/*  Each credit line has ONE fixed note value.                         */
-/*  e.g. $6,000 credit → 4 notes × $1,500 each                        */
+/*  Variable Note System — Privacy by Design                          */
+/*  Each note has a DIFFERENT size. Nobody can multiply count × price */
+/*  to guess total exposure. Values are private between user/platform. */
 /* ------------------------------------------------------------------ */
 
 interface Note {
@@ -20,49 +22,27 @@ interface Note {
   createdAtSlot: number;
 }
 
-// This credit line: $50,000 total, note size = $1,000 each → 50 notes
-const NOTE_SIZE_USD = 1_000;
-const TOTAL_CREDIT_USD = 50_000;
-const LIMIT_NOTES = TOTAL_CREDIT_USD / NOTE_SIZE_USD; // 50 notes
-
-// First credit line — 10 notes active (7 drawn, 3 repaid)
+// 10 notes with variable values — privacy by design
 const NOTES: Note[] = [
-  { id: "note_01", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_050 },
-  { id: "note_02", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_051 },
-  { id: "note_03", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_052 },
-  { id: "note_04", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_053 },
-  { id: "note_05", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_054 },
-  { id: "note_06", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_055 },
-  { id: "note_07", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_056 },
-  { id: "note_08", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_060 },
-  { id: "note_09", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_061 },
-  { id: "note_10", sizeUsd: NOTE_SIZE_USD, owner: "MM-DEMO-01", status: "repaid", market: "BTC-PERP", createdAtSlot: 20_062 },
+  { id: "note_a1", sizeUsd: 1_250, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_050 },
+  { id: "note_a2", sizeUsd: 750, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_051 },
+  { id: "note_a3", sizeUsd: 1_100, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_052 },
+  { id: "note_a4", sizeUsd: 890, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_053 },
+  { id: "note_a5", sizeUsd: 1_340, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_054 },
+  { id: "note_a6", sizeUsd: 620, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_055 },
+  { id: "note_a7", sizeUsd: 1_080, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_060 },
+  { id: "note_a8", sizeUsd: 950, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_061 },
+  { id: "note_a9", sizeUsd: 1_420, owner: "MM-DEMO-01", status: "repaid", market: "BTC-PERP", createdAtSlot: 20_062 },
+  { id: "note_a10", sizeUsd: 700, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_065 },
 ];
 
 const drawnNotes = NOTES.filter(n => n.status === "drawn");
 const repaidNotes = NOTES.filter(n => n.status === "repaid");
-const totalDrawnUsd = drawnNotes.length * NOTE_SIZE_USD;
-const totalRepaidUsd = repaidNotes.length * NOTE_SIZE_USD;
-
-// Second credit line example — smaller line, different note size
-// User wanted $6,000 → got 4 notes × $1,500 each
-const CREDIT_LINE_2 = {
-  noteSize: 1_500,
-  noteCount: 4,
-  totalCredit: 6_000,
-  drawn: 3,
-  repaid: 1,
-};
-
-// Third credit line example — medium line
-// User wanted $15,000 → got 5 notes × $3,000 each
-const CREDIT_LINE_3 = {
-  noteSize: 3_000,
-  noteCount: 5,
-  totalCredit: 15_000,
-  drawn: 2,
-  repaid: 3,
-};
+const totalDrawnUsd = drawnNotes.reduce((s, n) => s + n.sizeUsd, 0);
+const totalRepaidUsd = repaidNotes.reduce((s, n) => s + n.sizeUsd, 0);
+const totalLimitUsd = 52_380;
+const limitNotes = 50;
+const noteSizeRange = { min: 620, max: 1_420, avg: Math.round(NOTES.reduce((s, n) => s + n.sizeUsd, 0) / NOTES.length) };
 
 /* ------------------------------------------------------------------ */
 /*  Credit Line                                                        */
@@ -93,13 +73,12 @@ export function getDemoCreditLine() {
     underwriter: "UW-DEMO-01",
     auditor: "AUD-DEMO-01",
     poolId: "pool-usdc-sol-market-maker-credit",
-    noteSizeUsd: NOTE_SIZE_USD,
-    limitNotes: LIMIT_NOTES,
-    totalCreditUsd: TOTAL_CREDIT_USD,
+    noteSizeRange,
+    limitNotes,
     drawnNotes: drawnNotes.length,
     repaidNotes: repaidNotes.length,
-    defaultedNotes: 0,
     outstandingNotes: drawnNotes.length,
+    defaultedNotes: 0,
     interestBps: 75,
     maturitySlot: 50_000,
     status: 1,
@@ -115,17 +94,14 @@ export function getDemoCreditLine() {
       healthRatio: 1.91,
       status: "healthy" as const,
     },
-    notes: NOTES,
+    // PUBLIC view: only note IDs and status (no values)
+    publicNotes: NOTES.map(n => ({ id: n.id, status: n.status, market: n.market })),
+    // PRIVATE view: full note details with values (only for user/platform)
+    privateNotes: NOTES,
     receipts: [
       { receiptHash: `receipt_${hashShort("period_20_050_20_150")}`, signer: "AUD-DEMO-01", periodStartSlot: 20_050, periodEndSlot: 20_150 },
     ],
-    drawHistory: drawnNotes.map(n => ({ notes: 1, market: n.market ?? "SOL-PERP", asset: "USDC", slot: n.createdAtSlot, noteId: n.id, noteSize: n.sizeUsd })),
-    // Multiple credit line examples
-    creditLines: [
-      { id: "line_vault_01", noteSize: NOTE_SIZE_USD, notes: LIMIT_NOTES, total: TOTAL_CREDIT_USD, drawn: drawnNotes.length, repaid: repaidNotes.length, status: "active" },
-      { id: "line_vault_02", noteSize: CREDIT_LINE_2.noteSize, notes: CREDIT_LINE_2.noteCount, total: CREDIT_LINE_2.totalCredit, drawn: CREDIT_LINE_2.drawn, repaid: CREDIT_LINE_2.repaid, status: "active" },
-      { id: "line_vault_03", noteSize: CREDIT_LINE_3.noteSize, notes: CREDIT_LINE_3.noteCount, total: CREDIT_LINE_3.totalCredit, drawn: CREDIT_LINE_3.drawn, repaid: CREDIT_LINE_3.repaid, status: "active" },
-    ],
+    drawHistory: drawnNotes.map(n => ({ notes: 1, market: n.market ?? "SOL-PERP", asset: "USDC", slot: n.createdAtSlot, noteId: n.id })),
   };
 }
 
@@ -154,7 +130,7 @@ export function getDemoRiskCompute() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Settlement with Fixed Notes                                        */
+/*  Settlement with Variable Notes                                     */
 /* ------------------------------------------------------------------ */
 
 function createSettlementEnvelope(input: { kind: "draw" | "repay"; creditLineId: string; borrower: string; poolId: string; notes: number; noteSizeUsd: number; asset: string; market: string; currentSlot: number }) {
@@ -178,17 +154,19 @@ function createSettlementEnvelope(input: { kind: "draw" | "repay"; creditLineId:
 }
 
 export function getDemoSettlement() {
-  const drawInput = { kind: "draw" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: NOTE_SIZE_USD, asset: "USDC", market: "SOL-PERP", currentSlot: 20_050 };
-  const repayInput = { kind: "repay" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: NOTE_SIZE_USD, asset: "USDC", market: "SOL-PERP", currentSlot: 20_060 };
+  const drawNote = drawnNotes[0];
+  const repayNote = repaidNotes[0];
+  const drawInput = { kind: "draw" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: drawNote.sizeUsd, asset: "USDC", market: drawNote.market ?? "SOL-PERP", currentSlot: drawNote.createdAtSlot };
+  const repayInput = { kind: "repay" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: repayNote.sizeUsd, asset: "USDC", market: repayNote.market ?? "SOL-PERP", currentSlot: repayNote.createdAtSlot };
   const drawEnvelope = createSettlementEnvelope(drawInput);
   const repayEnvelope = createSettlementEnvelope(repayInput);
   const drawReceiptHash = `receipt_${hashShort(drawEnvelope.commitment + drawEnvelope.noteDelta)}`;
   const repayReceiptHash = `receipt_${hashShort(repayEnvelope.commitment + repayEnvelope.noteDelta)}`;
   return {
-    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash }, noteValue: NOTE_SIZE_USD },
-    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash }, noteValue: NOTE_SIZE_USD },
+    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash }, noteValue: drawNote.sizeUsd },
+    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash }, noteValue: repayNote.sizeUsd },
     verified: { drawDecryptedOk: true, drawReceiptValid: true, repayReceiptValid: true },
-    noteSummary: { totalNotes: NOTES.length, drawnCount: drawnNotes.length, repaidCount: repaidNotes.length, drawnValueUsd: totalDrawnUsd, repaidValueUsd: totalRepaidUsd, noteSize: NOTE_SIZE_USD },
+    noteSummary: { totalNotes: NOTES.length, drawnCount: drawnNotes.length, repaidCount: repaidNotes.length, drawnValueUsd: totalDrawnUsd, repaidValueUsd: totalRepaidUsd, sizeRange: noteSizeRange },
   };
 }
 
@@ -199,7 +177,7 @@ export function getDemoSettlement() {
 export function getPrivacyOptions() {
   return [
     { id: "encrypted-deal-room", label: "Encrypted deal room", status: "working" as const, implementedInThisRepo: true, bestFor: "Private borrower terms, strategy notes, venue lists.", whatItHides: ["strategy text", "requested private terms", "raw venue notes"], whatStaysPublic: ["borrower commitment", "auditor id", "terms hash"] },
-    { id: "fixed-note-vault", label: "Fixed-note vault", status: "working" as const, implementedInThisRepo: true, bestFor: "Each credit line has a fixed note value (e.g. $1,000/note). Simple, transparent accounting.", whatItHides: ["individual draw timing", "market-specific exposure"], whatStaysPublic: ["note count", "line status", "note value"] },
+    { id: "variable-note-vault", label: "Variable-note vault", status: "working" as const, implementedInThisRepo: true, bestFor: "Each note has a different value ($620–$1,420). Nobody can multiply count × fixed price to guess the total.", whatItHides: ["exact total borrowed", "per-note value", "individual exposure"], whatStaysPublic: ["note count", "line status"] },
     { id: "shielded-settlement", label: "Shielded settlement", status: "working" as const, implementedInThisRepo: true, bestFor: "Encrypted settlement envelopes. Transfer details hidden. Only commitment hashes on-chain.", whatItHides: ["exact transfer amounts", "settlement path", "asset details"], whatStaysPublic: ["commitment hashes", "note counts"] },
     { id: "arcium-risk-compute", label: "MPC risk compute", status: "working" as const, implementedInThisRepo: true, bestFor: "Encrypted risk scoring. Auditor gets commitment hash — never raw inventory numbers.", whatItHides: ["inventory", "venue balances", "risk inputs"], whatStaysPublic: ["commitment hash", "pass/fail"] },
     { id: "magicblock-session", label: "MagicBlock private session", status: "working" as const, implementedInThisRepo: true, bestFor: "Delegate to ER for sub-millisecond private sessions, commit back to vault.", whatItHides: ["session quotes", "routing telemetry"], whatStaysPublic: ["final vault state"] },
