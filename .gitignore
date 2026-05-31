@@ -13,6 +13,8 @@ coverage/
 
 # Local files (not for GitHub)
 VIDEO_SCRIPT.md
+SIMPLE_EXPLANATION.md
+PRESENTATION_CHEAT_SHEET.md
 
 # Solana / Rust build artifacts
 target/
