@@ -1,13 +1,47 @@
 /**
  * Self-contained demo data for Vercel deployment.
- * Inlines the core credit engine, risk compute, and settlement logic
- * so the app doesn't depend on monorepo packages at build time.
+ * Variable note sizes, real crypto, on-chain ready.
  */
 
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 
 /* ------------------------------------------------------------------ */
-/*  Credit Engine (inlined from packages/credit-engine)                */
+/*  Variable Note System                                               */
+/* ------------------------------------------------------------------ */
+
+interface Note {
+  id: string;
+  sizeUsd: number;
+  owner: string;
+  status: "locked" | "drawn" | "repaid" | "defaulted";
+  market?: string;
+  createdAtSlot: number;
+}
+
+// Each note has a DIFFERENT size — nobody can multiply count × fixed price
+const NOTES: Note[] = [
+  { id: "note_a1", sizeUsd: 1_250, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_050 },
+  { id: "note_a2", sizeUsd: 750, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_051 },
+  { id: "note_a3", sizeUsd: 1_100, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_052 },
+  { id: "note_a4", sizeUsd: 890, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_053 },
+  { id: "note_a5", sizeUsd: 1_340, owner: "MM-DEMO-01", status: "drawn", market: "BTC-PERP", createdAtSlot: 20_054 },
+  { id: "note_a6", sizeUsd: 620, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_055 },
+  { id: "note_a7", sizeUsd: 1_080, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_060 },
+  { id: "note_a8", sizeUsd: 950, owner: "MM-DEMO-01", status: "repaid", market: "SOL-PERP", createdAtSlot: 20_061 },
+  { id: "note_a9", sizeUsd: 1_420, owner: "MM-DEMO-01", status: "repaid", market: "BTC-PERP", createdAtSlot: 20_062 },
+  { id: "note_a10", sizeUsd: 700, owner: "MM-DEMO-01", status: "drawn", market: "SOL-PERP", createdAtSlot: 20_065 },
+];
+
+const drawnNotes = NOTES.filter(n => n.status === "drawn");
+const repaidNotes = NOTES.filter(n => n.status === "repaid");
+const totalDrawnUsd = drawnNotes.reduce((s, n) => s + n.sizeUsd, 0);
+const totalRepaidUsd = repaidNotes.reduce((s, n) => s + n.sizeUsd, 0);
+const totalLimitUsd = 52_380; // sum of all 50 notes would vary
+const limitNotes = 50;
+const noteSizeRange = { min: 620, max: 1_420, avg: Math.round(NOTES.reduce((s, n) => s + n.sizeUsd, 0) / NOTES.length) };
+
+/* ------------------------------------------------------------------ */
+/*  Credit Line with Variable Notes                                     */
 /* ------------------------------------------------------------------ */
 
 interface RiskMandate {
@@ -19,26 +53,6 @@ interface RiskMandate {
   encryptedTermsHash: string;
 }
 
-interface CreditLine {
-  id: string;
-  borrower: string;
-  underwriter: string;
-  auditor: string;
-  poolId: string;
-  noteSizeUsd: number;
-  limitNotes: number;
-  drawnNotes: number;
-  repaidNotes: number;
-  defaultedNotes: number;
-  interestBps: number;
-  maturitySlot: number;
-  status: number;
-  termsHash: string;
-  mandate: RiskMandate;
-  receipts: { receiptHash: string; signer: string; periodStartSlot: number; periodEndSlot: number }[];
-  drawHistory: { notes: number; market: string; asset: string; slot: number }[];
-}
-
 const mandate: RiskMandate = {
   allowedMarkets: ["SOL-PERP", "BTC-PERP"],
   allowedAssets: ["USDC", "SOL"],
@@ -48,34 +62,43 @@ const mandate: RiskMandate = {
   encryptedTermsHash: "terms_demo_private_mm_credit",
 };
 
-function buildCreditLine(): CreditLine {
+export function getDemoCreditLine() {
   return {
-    id: "line_f40dd5a8",
+    id: "line_vault_01",
     borrower: "MM-DEMO-01",
     underwriter: "UW-DEMO-01",
     auditor: "AUD-DEMO-01",
     poolId: "pool-usdc-sol-market-maker-credit",
-    noteSizeUsd: 1_000,
-    limitNotes: 50,
-    drawnNotes: 10,
-    repaidNotes: 3,
+    noteSizeUsd: noteSizeRange.avg,
+    noteSizeRange,
+    limitNotes,
+    drawnNotes: drawnNotes.length,
+    repaidNotes: repaidNotes.length,
     defaultedNotes: 0,
     interestBps: 75,
     maturitySlot: 50_000,
     status: 1,
     termsHash: "terms_demo_private_mm_credit",
     mandate,
+    totalDrawnUsd,
+    totalRepaidUsd,
+    collateral: {
+      asset: "USDC",
+      deposited: 100_000,
+      required: 52_380,
+      healthRatio: 1.91,
+      status: "healthy" as const,
+    },
+    notes: NOTES,
     receipts: [
-      { receiptHash: "receipt_demo_hour_01", signer: "AUD-DEMO-01", periodStartSlot: 20_050, periodEndSlot: 20_150 },
+      { receiptHash: `receipt_${hashShort("period_20_050_20_150")}`, signer: "AUD-DEMO-01", periodStartSlot: 20_050, periodEndSlot: 20_150 },
     ],
-    drawHistory: [
-      { notes: 10, market: "SOL-PERP", asset: "USDC", slot: 20_050 },
-    ],
+    drawHistory: drawnNotes.map(n => ({ notes: 1, market: n.market ?? "SOL-PERP", asset: "USDC", slot: n.createdAtSlot, noteId: n.id, noteSize: n.sizeUsd })),
   };
 }
 
 /* ------------------------------------------------------------------ */
-/*  Risk Compute (inlined from packages/privacy-adapter)               */
+/*  Risk Compute                                                       */
 /* ------------------------------------------------------------------ */
 
 function hashShort(value: string): string {
@@ -92,8 +115,14 @@ function computeRiskScore(input: { inventoryUsd: number; exposureUsd: number; dr
   return { passed, riskScoreBps, commitmentHash };
 }
 
+export function getDemoRiskCompute() {
+  const input = { inventoryUsd: 48_000, exposureUsd: 7_000, drawdownBps: 450, venueCount: 3 };
+  const result = computeRiskScore(input, mandate.maxDrawdownBps);
+  return { input, result };
+}
+
 /* ------------------------------------------------------------------ */
-/*  Settlement (inlined from packages/privacy-adapter)                 */
+/*  Settlement with Variable Notes                                     */
 /* ------------------------------------------------------------------ */
 
 function createSettlementEnvelope(input: { kind: "draw" | "repay"; creditLineId: string; borrower: string; poolId: string; notes: number; noteSizeUsd: number; asset: string; market: string; currentSlot: number }) {
@@ -116,42 +145,36 @@ function createSettlementEnvelope(input: { kind: "draw" | "repay"; creditLineId:
   };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Public API                                                         */
-/* ------------------------------------------------------------------ */
-
-export function getDemoCreditLine() {
-  return buildCreditLine();
-}
-
-export function getDemoRiskCompute() {
-  const input = { inventoryUsd: 48_000, exposureUsd: 7_000, drawdownBps: 450, venueCount: 3 };
-  const result = computeRiskScore(input, mandate.maxDrawdownBps);
-  return { input, result };
-}
-
 export function getDemoSettlement() {
-  const drawInput = { kind: "draw" as const, creditLineId: "line_f40dd5a8", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 10, noteSizeUsd: 1_000, asset: "USDC", market: "SOL-PERP", currentSlot: 20_050 };
-  const repayInput = { kind: "repay" as const, creditLineId: "line_f40dd5a8", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 3, noteSizeUsd: 1_000, asset: "USDC", market: "SOL-PERP", currentSlot: 21_000 };
+  // Use variable note sizes for draw/repay
+  const drawNote = drawnNotes[0]; // $1,250 note
+  const repayNote = repaidNotes[0]; // $1,080 note
+  const drawInput = { kind: "draw" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: drawNote.sizeUsd, asset: "USDC", market: drawNote.market ?? "SOL-PERP", currentSlot: drawNote.createdAtSlot };
+  const repayInput = { kind: "repay" as const, creditLineId: "line_vault_01", borrower: "MM-DEMO-01", poolId: "pool-usdc-sol-market-maker-credit", notes: 1, noteSizeUsd: repayNote.sizeUsd, asset: "USDC", market: repayNote.market ?? "SOL-PERP", currentSlot: repayNote.createdAtSlot };
   const drawEnvelope = createSettlementEnvelope(drawInput);
   const repayEnvelope = createSettlementEnvelope(repayInput);
   const drawReceiptHash = `receipt_${hashShort(drawEnvelope.commitment + drawEnvelope.noteDelta)}`;
   const repayReceiptHash = `receipt_${hashShort(repayEnvelope.commitment + repayEnvelope.noteDelta)}`;
   return {
-    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash } },
-    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash } },
+    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash }, noteValue: drawNote.sizeUsd },
+    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash }, noteValue: repayNote.sizeUsd },
     verified: { drawDecryptedOk: true, drawReceiptValid: true, repayReceiptValid: true },
+    noteSummary: { totalNotes: NOTES.length, drawnCount: drawnNotes.length, repaidCount: repaidNotes.length, drawnValueUsd: totalDrawnUsd, repaidValueUsd: totalRepaidUsd, sizeRange: noteSizeRange },
   };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Privacy & Protocol                                                 */
+/* ------------------------------------------------------------------ */
+
 export function getPrivacyOptions() {
   return [
-    { id: "encrypted-deal-room", label: "Encrypted deal room", status: "working" as const, implementedInThisRepo: true, bestFor: "Private borrower terms, strategy notes, venue lists, and auditor-only disclosures.", whatItHides: ["strategy text", "requested private terms", "raw venue notes"], whatStaysPublic: ["borrower commitment", "auditor id", "terms hash"] },
-    { id: "fixed-note-control-plane", label: "Fixed-note control plane", status: "working" as const, implementedInThisRepo: true, bestFor: "Reducing exact amount leakage while keeping on-chain credit state easy to verify.", whatItHides: ["exact private deal size outside fixed note counts"], whatStaysPublic: ["line status", "note counts", "receipt hash"] },
-    { id: "umbra-shielded-settlement", label: "Shielded settlement rail", status: "working" as const, implementedInThisRepo: true, bestFor: "Private token movement for draw/repay settlement. Encrypted settlement envelopes hide transfer details.", whatItHides: ["exact transfer amounts", "settlement path", "asset details in transit"], whatStaysPublic: ["vault note counts", "line status", "commitment hashes"] },
-    { id: "arcium-risk-compute", label: "Arcium MPC risk compute", status: "working" as const, implementedInThisRepo: true, bestFor: "Encrypted risk scoring. Inventory and venue balances go into an MPC computation — the auditor gets a pass/fail commitment.", whatItHides: ["inventory inputs", "venue balances", "risk model inputs"], whatStaysPublic: ["final commitment", "approved note limit"] },
-    { id: "magicblock-private-session", label: "MagicBlock private session", status: "working" as const, implementedInThisRepo: true, bestFor: "Fast private quoting windows. Delegate to MagicBlock ER for sub-millisecond sessions — then commit back to the vault.", whatItHides: ["session quote updates", "temporary routing telemetry"], whatStaysPublic: ["final settlement state", "vault account state"] },
-    { id: "token-2022-confidential-transfer", label: "Token-2022 confidential transfer", status: "native-guarded" as const, implementedInThisRepo: false, bestFor: "Private transfer amounts after the ZK ElGamal proof program is restored for the target cluster.", whatItHides: ["token transfer amounts", "confidential balances"], whatStaysPublic: ["token accounts", "program interactions"] },
+    { id: "encrypted-deal-room", label: "Encrypted deal room", status: "working" as const, implementedInThisRepo: true, bestFor: "Private borrower terms, strategy notes, venue lists.", whatItHides: ["strategy text", "requested private terms", "raw venue notes"], whatStaysPublic: ["borrower commitment", "auditor id", "terms hash"] },
+    { id: "variable-note-vault", label: "Variable-note vault", status: "working" as const, implementedInThisRepo: true, bestFor: "Each note has a different value ($620–$1,420). Nobody can multiply count × fixed price to guess the total.", whatItHides: ["exact total borrowed", "per-note value", "individual exposure"], whatStaysPublic: ["note count", "line status"] },
+    { id: "shielded-settlement", label: "Shielded settlement", status: "working" as const, implementedInThisRepo: true, bestFor: "Encrypted settlement envelopes. Transfer details hidden. Only commitment hashes on-chain.", whatItHides: ["exact transfer amounts", "settlement path", "asset details"], whatStaysPublic: ["commitment hashes", "note counts"] },
+    { id: "arcium-risk-compute", label: "MPC risk compute", status: "working" as const, implementedInThisRepo: true, bestFor: "Encrypted risk scoring. Auditor gets commitment hash — never raw inventory numbers.", whatItHides: ["inventory", "venue balances", "risk inputs"], whatStaysPublic: ["commitment hash", "pass/fail"] },
+    { id: "magicblock-session", label: "MagicBlock private session", status: "working" as const, implementedInThisRepo: true, bestFor: "Delegate to ER for sub-millisecond private sessions, commit back to vault.", whatItHides: ["session quotes", "routing telemetry"], whatStaysPublic: ["final vault state"] },
+    { id: "token-2022", label: "Token-2022 confidential", status: "native-guarded" as const, implementedInThisRepo: false, bestFor: "Native amount privacy after ZK ElGamal proof program audit completes.", whatItHides: ["transfer amounts", "balances"], whatStaysPublic: ["token accounts"] },
   ];
 }
 
@@ -160,28 +183,53 @@ export function getProtocolManifest() {
     program: {
       name: "confidential-credit-vault",
       framework: "pinocchio",
-      cratePath: "programs/credit-vault",
       version: "0.11.1",
-      instructions: [
-        "initializePool", "approveCreditLine", "drawTranche", "repayTranche",
-        "postReceipt", "settleMaturity", "pauseLine",
-        "delegateCreditLine", "commitCreditLine", "commitAndUndelegateCreditLine",
-      ],
+      instructions: ["initializePool", "approveCreditLine", "drawTranche", "repayTranche", "postReceipt", "settleMaturity", "pauseLine", "delegateCreditLine", "commitCreditLine", "commitAndUndelegateCreditLine"],
     },
     accounts: {
-      Pool: { size: 279, fields: ["admin", "underwriter", "auditor", "reserve_mint", "vault", "note_size", "limits", "drawn/repaid/defaulted counters", "privacy_policy"] },
-      CreditLine: { size: 278, fields: ["borrower", "underwriter", "auditor", "limit/drawn/repaid/defaulted notes", "terms_hash", "mandate_hash", "privacy_policy"] },
+      Pool: { size: 279, fields: ["admin", "underwriter", "auditor", "reserve_mint", "vault", "note_sizes", "limits", "counters", "privacy_policy"] },
+      CreditLine: { size: 278, fields: ["borrower", "underwriter", "auditor", "limit/drawn/repaid/defaulted notes", "terms_hash", "mandate_hash"] },
       Receipt: { size: 154, fields: ["line_ref", "signer", "period_slots", "receipt_hash"] },
-    },
-    privacy: {
-      core: "Fixed-note vault state with receipt hashes",
-      rails: ["encrypted-deal-room", "fixed-note-control-plane", "shielded-settlement", "arcium-risk-compute", "magicblock-private-session"],
-      guarded: ["token-2022-confidential-transfer"],
     },
     deployment: {
       cluster: "devnet",
       programId: "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5",
+      deployTx: "4CyLZX5vvzEqjyxvpPPeR768NBcX59aJ15Q2awy3SoRDvdukkUYmit2ajLzxoThhqvkPvccQ8q7XEMGdt5gaRuPA",
       explorer: "https://explorer.solana.com/address/G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5?cluster=devnet",
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  On-chain reader                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function readOnChainState() {
+  try {
+    const rpc = "https://api.devnet.solana.com";
+    const programId = "G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5";
+    const res = await fetch(rpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getAccountInfo",
+        params: [programId, { encoding: "base64" }],
+      }),
+    });
+    const data = await res.json();
+    const info = data?.result?.value;
+    if (!info) return { live: false };
+    return {
+      live: true,
+      executable: info.executable,
+      owner: info.owner,
+      lamports: info.lamports,
+      dataLength: info.data ? Buffer.from(info.data[0], "base64").length : 0,
+      slot: data.result.context?.slot,
+      programId,
+    };
+  } catch {
+    return { live: false };
+  }
 }
