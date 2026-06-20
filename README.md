@@ -11,8 +11,9 @@
 Mute gives market makers bounded operating credit **without exposing** negotiation terms, strategy details, venue balances, or risk reports. The protocol keeps accounting verifiable on-chain while privacy rails protect sensitive data at every boundary.
 
 - **Variable-value credit notes** — Each note has a different encrypted amount, so on-chain observers see note counts, not dollar values.
+- **Credit note exchange** — A peer-to-peer marketplace where drawn notes trade at a discount to face value, with off-chain order book and shielded on-chain settlement.
 - **Encrypted risk compute** — MPC-style risk scoring returns only a commitment hash; auditors never see raw inventory or exposure numbers.
-- **Shielded settlement** — Umbra-style stealth addresses with AES-256-GCM encryption. Settlement receipts verified without decrypting.
+- **Shielded settlement** — Umbra-style stealth addresses with AES-256-GCM encryption (Web Crypto API). Settlement receipts verified without decrypting.
 - **Private execution** — MagicBlock edge runtime delegation for sub-millisecond private sessions with mainnet state commits.
 
 ---
@@ -100,9 +101,20 @@ The on-chain program (`G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5`) is written
 | Web frontend | Next.js 16, React 19, Tailwind CSS v4 |
 | Wallet integration | Solana Wallet Adapter (Phantom, etc.) |
 | Token operations | @solana/spl-token, @solana/web3.js v1 |
-| Encryption | AES-256-GCM, x25519 key exchange |
+| Client-side crypto | Web Crypto API (AES-256-GCM, X25519) + pure-JS SHA-256 |
 | Edge runtime | MagicBlock SDK |
+| Local dev/test | Surfpool (devnet fork) |
 | Deployment | Vercel (frontend), Solana devnet (program) |
+
+---
+
+## App Routes
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Homepage — protocol overview, live demo data, and the devnet interaction panel (pool, line, draw, repay, risk, settlement, MagicBlock, history) |
+| `/trade` | Trading desk — one-click account setup, draw/repay credit, encrypted variable-note positions |
+| `/exchange` | Credit note exchange — peer-to-peer order book, list/buy notes at a discount, shielded settlement |
 
 ---
 
@@ -120,25 +132,40 @@ The on-chain program (`G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5`) is written
 │   └── src/
 │       ├── app/
 │       │   ├── page.tsx        # Homepage (dashboard + interact)
-│       │   └── trade/page.tsx  # Trading desk
+│       │   ├── trade/page.tsx  # Trading desk
+│       │   ├── exchange/page.tsx  # Credit note exchange
+│       │   └── api/exchange/   # Order-book API (listings, buy, trades, stats, cancel)
 │       ├── components/
 │       │   ├── Dashboard.tsx   # Landing page with demo data
 │       │   ├── RealApp.tsx     # Live devnet interaction (all tabs)
 │       │   └── WalletProvider.tsx
 │       └── lib/
 │           ├── program.ts      # Instruction builders + account parsers
+│           ├── sha256.ts       # Pure-JS SHA-256/HMAC + secure RNG (browser-safe)
+│           ├── exchange-store.ts # In-memory order book for the note exchange
 │           ├── risk-engine.ts   # MPC risk scoring simulation
-│           ├── stealth-settlement.ts  # Umbra-style shielded envelopes
+│           ├── stealth-settlement.ts  # Umbra-style shielded envelopes (Web Crypto)
 │           ├── magicblock.ts    # Edge runtime delegation
 │           ├── token2022.ts     # Confidential transfer extension
 │           ├── usdc.ts          # USDC deposit helpers
 │           └── persistence.ts   # Local state persistence
 ├── apps/localnet/src/          # Integration tests
-│   ├── local-integration.ts    # Full instruction flow test
+│   ├── local-integration.ts    # Full instruction flow test (uses program.ts builders)
 │   ├── devnet-smoke.ts         # Devnet smoke test
-│   └── surfpool-smoke.ts       # Surfpool local test
+│   └── surfpool-smoke.ts       # Surfpool (devnet fork) test
 └── apps/api/src/               # Demo API endpoints
 ```
+
+---
+
+## Exchange
+
+The `/exchange` page is a peer-to-peer marketplace for credit notes. Market makers who have drawn confidential credit can list their note lots at a discount to face value; buyers purchase them for the yield. The order book lives off-chain (standard exchange architecture); each fill references a shielded AES-256-GCM settlement envelope.
+
+- **List** notes: seller sets note count, note size, ask price, maturity, privacy rail — the API validates (ask ≤ face) and computes discount + annualized yield.
+- **Buy**: the buyer's client creates a real shielded settlement envelope, then fills the listing (atomic status flip — no double-fills).
+- **Stats**: active listings, total face value, trade volume, average discount, best yield.
+- Seeded with realistic market-maker listings on first access.
 
 ---
 

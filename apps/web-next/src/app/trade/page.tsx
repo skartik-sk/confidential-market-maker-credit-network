@@ -385,6 +385,7 @@ export default function TradePage() {
             <div className="flex gap-1">
               <Link href="/" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors">Dashboard</Link>
               <span className="px-3 py-1.5 text-xs font-medium text-red border-b-2 border-red">Trade</span>
+              <Link href="/exchange" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors">Exchange</Link>
             </div>
           </div>
           <div className="flex items-center gap-3">
