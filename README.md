@@ -160,12 +160,17 @@ The on-chain program (`G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5`) is written
 
 ## Exchange
 
-The `/exchange` page is a peer-to-peer marketplace for credit notes. Market makers who have drawn confidential credit can list their note lots at a discount to face value; buyers purchase them for the yield. The order book lives off-chain (standard exchange architecture); each fill references a shielded AES-256-GCM settlement envelope.
+The `/exchange` page is a professional peer-to-peer marketplace for credit notes (Binance-style layout). Market makers who have drawn confidential credit can list their note lots at a discount to face value; buyers purchase them for the yield. The order book lives off-chain (standard exchange architecture); each fill references a shielded AES-256-GCM settlement envelope.
 
-- **List** notes: seller sets note count, note size, ask price, maturity, privacy rail — the API validates (ask ≤ face) and computes discount + annualized yield.
-- **Buy**: the buyer's client creates a real shielded settlement envelope, then fills the listing (atomic status flip — no double-fills).
-- **Stats**: active listings, total face value, trade volume, average discount, best yield.
+- **Markets** — five tradeable asset+tenor pairs (USDC-30D, USDC-90D, SOL-14D, ETH-45D, BTC-60D), each with its own price, 24h volume, high/low, and change.
+- **Chart** — pure-SVG candlestick chart (48 hourly OHLC candles) per market; no chart library dependency.
+- **Order book** — aggregated asks (from live listings) and bids with depth bars; market price updates on every trade.
+- **Buy/Sell panel** — buy fills the cheapest ask with a shielded settlement; sell lists notes with live discount + annualized-yield preview.
+- **List** notes: seller sets note count, note size, ask price (as % of par), maturity, privacy rail — the API validates (ask ≤ face) and computes discount + annualized yield.
+- **Atomic fills** — no double-fills; owner-only cancel.
 - Seeded with realistic market-maker listings on first access.
+
+API: `/api/exchange/{markets,candles,orderbook,listings,buy,cancel,trades,stats}`.
 
 ---
 

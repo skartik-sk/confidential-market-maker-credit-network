@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
     const daysToMaturity = Number(body.daysToMaturity);
     const privacy = String(body.privacy) as PrivacyPolicyLabel;
     const creditLineId = String(body.creditLineId ?? "").trim();
+    const market = String(body.market ?? "USDC-30D").trim();
 
     if (!Number.isInteger(noteCount) || noteCount <= 0) {
       return NextResponse.json({ error: "noteCount must be a positive integer" }, { status: 400 });
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
       daysToMaturity,
       privacy,
       creditLineId: creditLineId || "—",
+      market,
     };
     return NextResponse.json({ listing: createListing(input) }, { status: 201 });
   } catch (e: any) {
