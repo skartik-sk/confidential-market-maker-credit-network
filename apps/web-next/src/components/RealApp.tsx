@@ -486,11 +486,11 @@ export function RealApp() {
     setBusy(true);
     try {
       log("Creating shielded settlement envelope...");
-      const stealth = generateStealthKeyPair();
+      const stealth = await generateStealthKeyPair();
       log(`  Stealth viewing key: ${stealth.viewingPublicKey.slice(0, 16)}...`);
       log(`  Stealth spending key: ${stealth.spendingPublicKey.slice(0, 16)}...`);
 
-      const envelope = createShieldedEnvelope({
+      const envelope = await createShieldedEnvelope({
         sender: wallet.publicKey,
         recipient: new PublicKey(lineAddress),
         amount: drawAmount,

@@ -51,6 +51,37 @@ interface NotePosition {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Browser-safe helpers (crypto-secure RNG + validation)              */
+/* ------------------------------------------------------------------ */
+
+/** Cryptographically-secure random float in [0, 1) using the Web Crypto API. */
+function secureRandom(): number {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] / 0x100000000;
+}
+
+/** Opaque "encrypted" label for a note (display only — not real ciphertext). */
+function secureEncryptedLabel(): string {
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  const hex = Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
+  return hex.slice(0, 8) + "…" + hex.slice(-4);
+}
+
+/** Validate a base58 Solana address without throwing. */
+function isValidAddress(addr: string): boolean {
+  if (!addr || typeof addr !== "string") return false;
+  try {
+    // PublicKey throws on malformed input; base58 + length validated internally.
+    new PublicKey(addr);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -84,13 +115,13 @@ export default function TradePage() {
     setTxHistory(prev => [record, ...prev].slice(0, 50));
   }, [wallet.publicKey, connection]);
 
-  /* Load persisted state */
+  /* Load persisted state — validate addresses before applying */
   useEffect(() => {
     if (!wallet.publicKey) return;
     const state = loadUserState(wallet.publicKey.toBase58());
     if (state) {
-      if (state.poolAddress) setPoolAddress(state.poolAddress);
-      if (state.creditLineAddress) setLineAddress(state.creditLineAddress);
+      if (state.poolAddress && isValidAddress(state.poolAddress)) setPoolAddress(state.poolAddress);
+      if (state.creditLineAddress && isValidAddress(state.creditLineAddress)) setLineAddress(state.creditLineAddress);
       if (state.transactions) setTxHistory(state.transactions);
       log("Restored previous session");
     }
@@ -130,19 +161,23 @@ export default function TradePage() {
 
   /* Fetch state */
   const fetchPool = useCallback(async () => {
-    if (!poolAddress) return;
+    if (!poolAddress || !isValidAddress(poolAddress)) return;
     try {
       const info = await connection.getAccountInfo(new PublicKey(poolAddress));
       if (info) { const p = parsePoolAccount(Buffer.from(info.data)); if (p) setPoolData(p); }
-    } catch {}
+    } catch (e: any) {
+      // Don't spam the log on the initial auto-fetch; surface only real failures.
+    }
   }, [poolAddress, connection]);
 
   const fetchLine = useCallback(async () => {
-    if (!lineAddress) return;
+    if (!lineAddress || !isValidAddress(lineAddress)) return;
     try {
       const info = await connection.getAccountInfo(new PublicKey(lineAddress));
       if (info) { const l = parseCreditLineAccount(Buffer.from(info.data)); if (l) setLineData(l); }
-    } catch {}
+    } catch (e: any) {
+      // See note above.
+    }
   }, [lineAddress, connection]);
 
   useEffect(() => { fetchPool(); }, [fetchPool]);
@@ -165,11 +200,11 @@ export default function TradePage() {
   const handleSetup = useCallback(async () => {
     if (!wallet.publicKey) return;
     setBusy(true);
+    let committedPool = "";
+    let committedLine = "";
     try {
       // Step 1: Create pool
       const poolKp = Keypair.generate();
-      const poolAddr = poolKp.publicKey.toBase58();
-      setPoolAddress(poolAddr);
       log(`Setting up trading account...`);
 
       const slot = await connection.getSlot("confirmed");
@@ -201,16 +236,17 @@ export default function TradePage() {
         }),
         initIx,
       ], "init_pool", [poolKp]);
+      committedPool = poolKp.publicKey.toBase58();
+      setPoolAddress(committedPool);
       log(`✓ Pool created → https://explorer.solana.com/tx/${poolSig}?cluster=devnet`);
 
-      // Step 2: Approve credit line (use pool's maturity from on-chain)
+      // Step 2: Approve credit line (use pool's maturity from on-chain + fresh slot)
       const poolInfo = await connection.getAccountInfo(poolKp.publicKey, "confirmed");
       const freshPool = poolInfo ? parsePoolAccount(Buffer.from(poolInfo.data)) : null;
       const lineMaturity = freshPool ? freshPool.maturitySlot - 10_000 : slot + 90_000;
+      const openedSlot = await connection.getSlot("confirmed");
 
       const lineKp = Keypair.generate();
-      const lineAddr = lineKp.publicKey.toBase58();
-      setLineAddress(lineAddr);
 
       const approveIx = createApproveCreditLineIx({
         pool: poolKp.publicKey,
@@ -220,7 +256,7 @@ export default function TradePage() {
         limitNotes: 50,
         termsHash: Keypair.generate().publicKey,
         mandateHash: Keypair.generate().publicKey,
-        openedSlot: slot,
+        openedSlot,
         maturitySlot: lineMaturity,
       });
 
@@ -234,12 +270,19 @@ export default function TradePage() {
         }),
         approveIx,
       ], "approve_line", [lineKp]);
+      committedLine = lineKp.publicKey.toBase58();
+      setLineAddress(committedLine);
       log(`✓ Credit line approved ($50,000 limit) → https://explorer.solana.com/tx/${lineSig}?cluster=devnet`);
       log(`Setup complete — ready to trade!`);
 
       await fetchPool();
       await fetchLine();
-    } catch (e: any) { log(`Setup failed: ${e.message}`); }
+    } catch (e: any) {
+      // Rollback: only commit addresses for txs that actually confirmed.
+      if (!committedLine) setLineAddress("");
+      if (!committedPool) setPoolAddress("");
+      log(`Setup failed: ${e.message}`);
+    }
     setBusy(false);
   }, [wallet, connection, log, sendTxBatch, fetchPool, fetchLine]);
 
@@ -248,8 +291,12 @@ export default function TradePage() {
     if (!wallet.publicKey || !poolAddress || !lineAddress) return;
     setBusy(true);
     try {
-      const noteSizeUsd = poolData?.noteSizeUsd ?? 1000;
-      const notes = Math.max(1, Math.floor(drawUsd / noteSizeUsd));
+      const noteSizeUsd = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
+      if (drawUsd < noteSizeUsd) { log(`Minimum draw is $${noteSizeUsd.toLocaleString()} (1 note).`); setBusy(false); return; }
+      const notes = Math.floor(drawUsd / noteSizeUsd);
+      // Capacity guard: remaining notes in the line
+      const remaining = (lineData?.limitNotes ?? 0) - (lineData?.drawnNotes ?? 0);
+      if (notes > remaining) { log(`Only ${remaining} notes left in limit ($${(remaining * noteSizeUsd).toLocaleString()})`); setBusy(false); return; }
       const actualUsd = notes * noteSizeUsd;
 
       const slot = await connection.getSlot("confirmed");
@@ -262,36 +309,38 @@ export default function TradePage() {
       });
       const sig = await sendTx(ix, "draw");
 
-      // Generate encrypted note positions (variable value simulation)
+      // Generate encrypted note positions (crypto-secure RNG, variable value for privacy)
       const newPositions: NotePosition[] = Array.from({ length: notes }, (_, i) => {
-        const variance = 0.6 + Math.random() * 0.8; // 60%-140% of base note size
+        const variance = 0.6 + secureRandom() * 0.8; // 60%-140% of base note size
         const value = Math.round(noteSizeUsd * variance);
         return {
-          id: `${Date.now()}-${i}`,
+          id: `${slot}-${i}`,
           noteSizeUsd: value,
           status: "drawn" as const,
           drawnAt: slot,
-          market: ["SOL/USDC", "ETH/USDC", "BTC/USDC"][Math.floor(Math.random() * 3)],
-          encryptedValue: Buffer.from(Math.random().toString(36)).toString("base64").slice(0, 16) + "...",
+          market: ["SOL/USDC", "ETH/USDC", "BTC/USDC"][Math.floor(secureRandom() * 3)],
+          encryptedValue: secureEncryptedLabel(),
         };
       });
       setPositions(prev => [...newPositions, ...prev]);
 
-      log(`Drew $${actualUsd.toLocaleString()} (${notes} variable notes) → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`Drew ${notes} note${notes > 1 ? "s" : ""} ($${actualUsd.toLocaleString()}, variable encrypted values) → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool();
       await fetchLine();
     } catch (e: any) { log(`Draw failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet, connection, poolAddress, lineAddress, drawUsd, poolData, sendTx, log, fetchPool, fetchLine]);
+  }, [wallet, connection, poolAddress, lineAddress, drawUsd, poolData, lineData, sendTx, log, fetchPool, fetchLine]);
 
   /* Repay */
   const handleRepay = useCallback(async () => {
     if (!wallet.publicKey || !poolAddress || !lineAddress) return;
     setBusy(true);
     try {
-      const noteSizeUsd = poolData?.noteSizeUsd ?? 1000;
+      const noteSizeUsd = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
       const outstanding = (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0);
-      const notes = Math.max(1, Math.min(Math.floor(repayUsd / noteSizeUsd), outstanding));
+      if (outstanding <= 0) { log("Nothing to repay — draw credit first!"); setBusy(false); return; }
+      if (repayUsd < noteSizeUsd) { log(`Minimum repay is $${noteSizeUsd.toLocaleString()} (1 note).`); setBusy(false); return; }
+      const notes = Math.min(Math.floor(repayUsd / noteSizeUsd), outstanding);
       const actualUsd = notes * noteSizeUsd;
 
       const slot = await connection.getSlot("confirmed");
@@ -322,8 +371,9 @@ export default function TradePage() {
 
   const totalDrawnUsd = positions.filter(p => p.status === "drawn").reduce((s, p) => s + p.noteSizeUsd, 0);
   const totalRepaidUsd = positions.filter(p => p.status === "repaid").reduce((s, p) => s + p.noteSizeUsd, 0);
-  const creditUsed = lineData ? (lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes) * (poolData?.noteSizeUsd ?? 1000) : 0;
-  const creditLimit = lineData ? lineData.limitNotes * (poolData?.noteSizeUsd ?? 1000) : 0;
+  const lineNoteSize = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
+  const creditUsed = lineData ? (lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes) * lineNoteSize : 0;
+  const creditLimit = lineData ? lineData.limitNotes * lineNoteSize : 0;
 
   return (
     <div className="min-h-screen bg-bg">

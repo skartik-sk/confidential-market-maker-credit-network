@@ -21,6 +21,14 @@ import {
   Keypair,
 } from "@solana/web3.js";
 
+/* Browser-compatible u64 LE writer (writeBigUInt64LE doesn't exist in browser Buffer). */
+function writeU64LE(buf: Buffer, value: bigint | number, offset: number) {
+  const v = BigInt(value);
+  for (let i = 0; i < 8; i++) {
+    buf[offset + i] = Number((v >> BigInt(i * 8)) & BigInt(0xFF));
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
@@ -286,7 +294,7 @@ export function depositToConfidential(params: {
   const data = Buffer.alloc(4 + 8 + 1);
   let offset = 0;
   data.writeUInt32LE(38, offset); offset += 4; // ConfidentialTransferDeposit
-  data.writeBigUInt64LE(BigInt(amount), offset); offset += 8;
+  writeU64LE(data, BigInt(amount), offset); offset += 8;
   data.writeUInt8(6, offset); offset += 1; // decimals placeholder
 
   return new TransactionInstruction({
@@ -345,7 +353,7 @@ export function withdrawFromConfidential(params: {
   const data = Buffer.alloc(4 + 8 + 1);
   let offset = 0;
   data.writeUInt32LE(39, offset); offset += 4; // ConfidentialTransferWithdraw
-  data.writeBigUInt64LE(BigInt(amount), offset); offset += 8;
+  writeU64LE(data, BigInt(amount), offset); offset += 8;
   data.writeUInt8(6, offset); offset += 1;
 
   return new TransactionInstruction({

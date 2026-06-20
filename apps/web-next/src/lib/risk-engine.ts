@@ -4,10 +4,10 @@
  * Produces deterministic commitment hashes (SHA-256) and encryption proofs
  * so that auditors can verify risk scores without seeing the raw inputs.
  *
- * All crypto uses `node:crypto` — no external dependencies.
+ * Browser-safe crypto (see lib/sha256.ts) — no `node:crypto` dependency.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { sha256Concat, randomBytes } from "./sha256";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -166,13 +166,13 @@ export function computeRiskScore(
   // SHA-256( serialized input || serialized result || timestamp )
   const inputBuf = serializeRiskInput(input);
   const resultBuf = serializeRiskResult({ passed, riskScoreBps, components });
-  const timestampBuf = Buffer.from(timestamp, "utf-8");
+  const timestampBuf = new TextEncoder().encode(timestamp);
 
-  const commitmentHash = createHash("sha256")
-    .update(inputBuf)
-    .update(resultBuf)
-    .update(timestampBuf)
-    .digest("hex");
+  const commitmentHash = sha256Concat(
+    new Uint8Array(inputBuf),
+    new Uint8Array(resultBuf),
+    timestampBuf,
+  );
 
   // --- Encryption proof ---
   // Hash of intermediate values to prove the computation was actually done.
@@ -185,10 +185,7 @@ export function computeRiskScore(
   proofBuf.writeDoubleLE(drawdownRatio, 32);
   proofBuf.writeDoubleLE(venueBonus, 40);
 
-  const encryptionProof = createHash("sha256")
-    .update(proofBuf)
-    .update(randomBytes(16)) // salt so proofs are unique but verifiable
-    .digest("hex");
+  const encryptionProof = sha256Concat(new Uint8Array(proofBuf), randomBytes(16)); // salt so proofs are unique but verifiable
 
   return {
     passed,
@@ -223,13 +220,13 @@ export function verifyRiskCommitment(
     riskScoreBps: result.riskScoreBps,
     components: result.components,
   });
-  const timestampBuf = Buffer.from(result.timestamp, "utf-8");
+  const timestampBuf = new TextEncoder().encode(result.timestamp);
 
-  const expectedHash = createHash("sha256")
-    .update(inputBuf)
-    .update(resultBuf)
-    .update(timestampBuf)
-    .digest("hex");
+  const expectedHash = sha256Concat(
+    new Uint8Array(inputBuf),
+    new Uint8Array(resultBuf),
+    timestampBuf,
+  );
 
   return expectedHash === commitmentHash;
 }
