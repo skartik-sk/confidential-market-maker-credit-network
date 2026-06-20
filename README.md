@@ -85,11 +85,28 @@ The on-chain program (`G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5`) is written
 
 | Rail | What It Hides | Implementation |
 |------|---------------|----------------|
-| **Variable-value notes** | Individual note amounts | Each note carries a different encrypted value |
-| **Umbra settlement** | Payment destinations and amounts | Stealth addresses + AES-256-GCM envelopes |
-| **Arcium risk compute** | Inventory, exposure, drawdown | x25519 encryption + commitment hashes |
+| **Confidential note vault** | Individual note values + total exposure | Variable values + SHA-256 commitments (value ∥ blinding); values private to owner, commitments publishable (`lib/note-vault.ts`) |
+| **Umbra settlement** | Payment destinations and amounts | Stealth ephemeral keys + AES-256-GCM envelopes (Web Crypto API) |
+| **Arcium risk compute** | Inventory, exposure, drawdown | SHA-256 commitment hashes — auditor verifies without seeing inputs |
 | **MagicBlock ER** | Full execution state | Delegate to edge validator, commit back to mainnet |
 | **Token-2022** | Transfer amounts | ConfidentialTransferAccount (pending ZK audit) |
+
+### Confidentiality model — what is actually private
+
+The on-chain program is a **tranche accountant**: it stores note *counts* and a *denomination* (`note_size_usd`), not note values. To hide **values**, the confidential note vault (`lib/note-vault.ts`) mints each drawn note with:
+
+- a **variable value** (secure RNG, ±35% of denomination — never equal to it), kept private to the borrower;
+- a random **blinding factor**;
+- a **commitment** `SHA-256(value ∥ blinding)` that is safe to publish.
+
+Consequences (verified by `apps/localnet/src/note-vault-test.ts`, 18 checks):
+
+- An on-chain observer sees `count × denomination` — a **misleading public estimate**, not the real exposure.
+- Real exposure = Σ private note values, computable only by the borrower.
+- A revealed `(value, blinding)` verifies against the commitment at settlement — but unrevealed values cannot be derived (SHA-256 preimage resistance).
+- Same value + different blinding → different commitments (unlinkability).
+
+What is **not** hidden on-chain: note counts, the denomination, role pubkeys (admin/underwriter/auditor/borrower), and terms/mandate *commitments* (opaque hashes).
 
 ---
 

@@ -30,6 +30,7 @@ import {
   DEVNET_USDC_MINT,
 } from "@/lib/usdc";
 import { saveUserState, loadUserState, clearUserState, type TxRecord, addTransaction } from "@/lib/persistence";
+import { mintNotes, privateExposure, publicEstimate } from "@/lib/note-vault";
 import Link from "next/link";
 
 const WalletMultiButtonDynamic = dynamic(
@@ -47,27 +48,13 @@ interface NotePosition {
   status: "drawn" | "repaid" | "defaulted";
   drawnAt: number;
   market: string;
-  encryptedValue: string;
+  /** Real SHA-256 commitment to the variable value (safe to display). */
+  commitment: string;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Browser-safe helpers (crypto-secure RNG + validation)              */
 /* ------------------------------------------------------------------ */
-
-/** Cryptographically-secure random float in [0, 1) using the Web Crypto API. */
-function secureRandom(): number {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0] / 0x100000000;
-}
-
-/** Opaque "encrypted" label for a note (display only — not real ciphertext). */
-function secureEncryptedLabel(): string {
-  const buf = new Uint8Array(8);
-  crypto.getRandomValues(buf);
-  const hex = Array.from(buf).map(b => b.toString(16).padStart(2, "0")).join("");
-  return hex.slice(0, 8) + "…" + hex.slice(-4);
-}
 
 /** Validate a base58 Solana address without throwing. */
 function isValidAddress(addr: string): boolean {
@@ -309,22 +296,24 @@ export default function TradePage() {
       });
       const sig = await sendTx(ix, "draw");
 
-      // Generate encrypted note positions (crypto-secure RNG, variable value for privacy)
-      const newPositions: NotePosition[] = Array.from({ length: notes }, (_, i) => {
-        const variance = 0.6 + secureRandom() * 0.8; // 60%-140% of base note size
-        const value = Math.round(noteSizeUsd * variance);
-        return {
-          id: `${slot}-${i}`,
-          noteSizeUsd: value,
-          status: "drawn" as const,
-          drawnAt: slot,
-          market: ["SOL/USDC", "ETH/USDC", "BTC/USDC"][Math.floor(secureRandom() * 3)],
-          encryptedValue: secureEncryptedLabel(),
-        };
-      });
+      // Mint real confidential notes: each gets a variable value + blinding +
+      // SHA-256 commitment. The value stays private to the owner; only the
+      // commitment is safe to show. On-chain stores just the count.
+      const minted = mintNotes(lineAddress, noteSizeUsd, notes, slot);
+      const newPositions: NotePosition[] = minted.map((n, i) => ({
+        id: n.id,
+        noteSizeUsd: n.valueUsd,
+        status: "drawn" as const,
+        drawnAt: slot,
+        market: ["SOL/USDC", "ETH/USDC", "BTC/USDC"][i % 3],
+        commitment: n.commitment,
+      }));
       setPositions(prev => [...newPositions, ...prev]);
 
-      log(`Drew ${notes} note${notes > 1 ? "s" : ""} ($${actualUsd.toLocaleString()}, variable encrypted values) → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      const realExposure = privateExposure(minted);
+      const publicGuess = publicEstimate(minted, noteSizeUsd);
+      log(`Drew ${notes} confidential note${notes > 1 ? "s" : ""} → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`  🔒 real exposure $${realExposure.toLocaleString()} (private) · public estimate $${publicGuess.toLocaleString()} (on-chain)`);
       await fetchPool();
       await fetchLine();
     } catch (e: any) { log(`Draw failed: ${e.message}`); }
@@ -369,11 +358,14 @@ export default function TradePage() {
     setBusy(false);
   }, [wallet, connection, poolAddress, lineAddress, repayUsd, poolData, lineData, sendTx, log, fetchPool, fetchLine]);
 
-  const totalDrawnUsd = positions.filter(p => p.status === "drawn").reduce((s, p) => s + p.noteSizeUsd, 0);
+  const drawnPositions = positions.filter(p => p.status === "drawn");
+  const totalDrawnUsd = drawnPositions.reduce((s, p) => s + p.noteSizeUsd, 0);          // real private exposure
   const totalRepaidUsd = positions.filter(p => p.status === "repaid").reduce((s, p) => s + p.noteSizeUsd, 0);
   const lineNoteSize = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
   const creditUsed = lineData ? (lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes) * lineNoteSize : 0;
   const creditLimit = lineData ? lineData.limitNotes * lineNoteSize : 0;
+  // What an on-chain observer would GUESS vs the real private amount.
+  const publicGuessUsd = drawnPositions.length * lineNoteSize;
 
   return (
     <div className="min-h-screen bg-bg">
@@ -496,7 +488,7 @@ export default function TradePage() {
                               <td className="px-4 py-2 text-muted">{p.id.slice(0, 8)}</td>
                               <td className="px-4 py-2">{p.market}</td>
                               <td className="px-4 py-2 text-right">{showPrivate ? `$${p.noteSizeUsd.toLocaleString()}` : "••••"}</td>
-                              <td className="px-4 py-2 text-muted">{p.encryptedValue}</td>
+                              <td className="px-4 py-2 text-muted text-[10px]">{p.commitment.slice(0, 10)}…{p.commitment.slice(-4)}</td>
                               <td className="px-4 py-2">
                                 <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${
                                   p.status === "drawn" ? "bg-green-soft text-green" :
