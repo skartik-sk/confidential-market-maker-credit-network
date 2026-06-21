@@ -109,7 +109,6 @@ import {
   ER_RPC_URL,
   VALIDATOR_ASIA,
 } from "@/lib/magicblock";
-import { confidentialTransferStatus } from "@/lib/token2022";
 import {
   saveUserState,
   loadUserState,
@@ -495,6 +494,41 @@ export function RealApp() {
   }, [wallet.publicKey, connection, withdrawAmount, testTokenMint, log, sendTxBatch]);
 
   /* ================================================================ */
+  /*  TOKEN-2022 TAB ACTIONS                                          */
+  /* ================================================================ */
+
+  const [t22Mint, setT22Mint] = useState<string>("");
+  const [t22Tx, setT22Tx] = useState<string>("");
+
+  /** Create a REAL Token-2022 mint with the NonTransferable extension —
+   *  proves the Token-2022 extension framework works end-to-end from the UI. */
+  const handleCreateT22 = useCallback(async () => {
+    if (!wallet.publicKey) return;
+    setBusy(true);
+    try {
+      const { Keypair, SystemProgram, Transaction } = await import("@solana/web3.js");
+      const spl = await import("@solana/spl-token");
+      const TOKEN_2022 = spl.TOKEN_2022_PROGRAM_ID;
+      const mintKp = Keypair.generate();
+      const decimals = 6;
+      const mintLen = spl.getMintLen([spl.ExtensionType.NonTransferable]);
+      const lamports = await connection.getMinimumBalanceForRentExemption(mintLen);
+      log(`Creating Token-2022 mint (NonTransferable extension)…`);
+      const ixs = [
+        SystemProgram.createAccount({ fromPubkey: wallet.publicKey, newAccountPubkey: mintKp.publicKey, space: mintLen, lamports, programId: TOKEN_2022 }),
+        spl.createInitializeNonTransferableMintInstruction(mintKp.publicKey, TOKEN_2022),
+        spl.createInitializeMintInstruction(mintKp.publicKey, decimals, wallet.publicKey, null, TOKEN_2022),
+      ];
+      const sig = await sendTxBatch(ixs, "create_t22_mint", [mintKp]);
+      setT22Mint(mintKp.publicKey.toBase58());
+      setT22Tx(sig);
+      log(`✓ Token-2022 mint created (NonTransferable) → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      log(`  Mint: ${mintKp.publicKey.toBase58()}`);
+    } catch (e: any) { log(`Token-2022 mint failed: ${e.message}`); }
+    setBusy(false);
+  }, [wallet.publicKey, connection, log, sendTxBatch]);
+
+  /* ================================================================ */
   /*  RISK TAB ACTIONS                                                */
   /* ================================================================ */
 
@@ -797,17 +831,21 @@ export function RealApp() {
 
               {/* TOKEN-2022 */}
               {tab === "token2022" && (<>
-                <ActionCard step="T22" title="Token-2022 Confidential Transfers" disabled={busy}>
-                  <p className="text-xs text-muted mb-3">Native Solana confidential transfer extension. Transfer amounts are encrypted using ElGamal. Currently under ZK proof program security audit.</p>
-                  <div className="bg-amber-soft border border-amber/20 rounded p-3 mb-3">
-                    <p className="text-amber text-xs font-bold">Audit Pending</p>
-                    <p className="text-xs text-muted mt-1">ZK ElGamal proof program is under security audit. Architecture is ready, integration will activate when audit completes.</p>
-                  </div>
+                <ActionCard step="T22" title="Token-2022 Extension Framework" disabled={busy || !connected}>
+                  <p className="text-xs text-muted mb-3">Create a real Token-2022 mint with the NonTransferable extension — proving the extension framework works end-to-end. Confidential amounts across the protocol are handled by the Note Vault (commitment-based, tested).</p>
+                  <button onClick={handleCreateT22} disabled={busy || !connected} className="btn-primary text-sm w-full mb-3">{!connected ? "Connect wallet" : busy ? "Creating…" : "Create Token-2022 Mint"}</button>
+                  {t22Mint && (
+                    <div className="bg-green-soft border border-green/20 rounded p-3 mb-3 mono text-xs space-y-1">
+                      <p className="text-green font-bold">✓ Mint live on devnet</p>
+                      <p>Mint: <span className="text-red break-all">{t22Mint}</span></p>
+                      <p>Extension: <span className="text-ink">NonTransferable</span> (Token-2022)</p>
+                      {t22Tx && <a href={`https://explorer.solana.com/tx/${t22Tx}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-red hover:underline">Explorer →</a>}
+                    </div>
+                  )}
                   <div className="bg-bg rounded p-3 mono text-xs space-y-1">
-                    <p>Extension: <span className="text-red">ConfidentialTransferAccount</span></p>
-                    <p>Encryption: <span className="text-red">ElGamal (Twisted ElGamal on Ristretto)</span></p>
-                    <p>Proofs: <span className="text-red">Sigma proofs + Range proofs</span></p>
-                    <p>Status: <span className="text-amber">Pending audit</span></p>
+                    <p>Framework: <span className="text-red">Token-2022 (live on mainnet)</span></p>
+                    <p>Confidential amounts: <span className="text-green">Note Vault (commitments) — working</span></p>
+                    <p>Native CT extension: <span className="text-amber">needs @solana-program/token SDK</span></p>
                   </div>
                 </ActionCard>
               </>)}
