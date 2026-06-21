@@ -100,6 +100,7 @@ import {
   verifySettlementReceipt,
   generateStealthKeyPair,
 } from "@/lib/stealth-settlement";
+import { mintNotes, confidentialTransfer, openTransfer } from "@/lib/note-vault";
 import {
   delegateCreditLine,
   commitCreditLine,
@@ -559,6 +560,33 @@ export function RealApp() {
   /*  SETTLEMENT TAB ACTIONS                                          */
   /* ================================================================ */
 
+  const [confTransferResult, setConfTransferResult] = useState<any>(null);
+
+  /** Confidential transfer: re-blind a drawn note for a recipient. Value stays
+   *  hidden behind a fresh commitment until the sender reveals it. Runs on
+   *  devnet (no ZK proof program needed). */
+  const handleConfidentialTransfer = useCallback(() => {
+    if (!wallet.publicKey) return;
+    setBusy(true);
+    try {
+      const denom = poolData?.noteSizeUsd ?? 1000;
+      // Mint a source note (simulating one of the user's drawn notes), then transfer it.
+      const source = mintNotes(wallet.publicKey.toBase58(), denom, 1, Date.now())[0];
+      const recipient = drawAmount > 0 ? `Recipient-${wallet.publicKey.toBase58().slice(0, 6)}` : "Recipient";
+      const transfer = confidentialTransfer(source, recipient);
+      const opened = openTransfer(transfer);
+      setConfTransferResult({ transfer, opened, sourceValue: source.valueUsd });
+      log("Confidential transfer created:");
+      log(`  source value (private): $${source.valueUsd}`);
+      log(`  recipient commitment: ${transfer.commitment.slice(0, 24)}…`);
+      log(`  fresh commitment ≠ source (unlinkable): ${transfer.commitment !== source.commitment ? "YES" : "NO"}`);
+      log(`  recipient opens + verifies: ${opened.valid ? "YES ✓" : "NO ✗"}`);
+      log(`  value stays hidden until sender reveals (value, blinding) out-of-band`);
+    } catch (e: any) { log(`Confidential transfer failed: ${e.message}`); }
+    setBusy(false);
+  }, [wallet.publicKey, poolData, drawAmount, log]);
+
+
   const handleShieldedSettlement = useCallback(async () => {
     if (!wallet.publicKey || !lineAddress) return;
     setBusy(true);
@@ -787,6 +815,19 @@ export function RealApp() {
 
               {/* SETTLEMENT */}
               {tab === "settlement" && (<>
+                <ActionCard step="CT" title="Confidential Transfer" disabled={busy || !connected}>
+                  <p className="text-xs text-muted mb-3">Transfer a note's value to a recipient behind a fresh commitment. Value stays hidden until you reveal it out-of-band. Runs on devnet (no ZK proof program needed).</p>
+                  <button onClick={handleConfidentialTransfer} disabled={busy || !connected} className="btn-primary text-sm w-full">{!connected ? "Connect wallet" : "Create Confidential Transfer"}</button>
+                  {confTransferResult && (
+                    <div className="bg-green-soft border border-green/20 rounded p-3 mt-3 mono text-xs space-y-1">
+                      <p className="text-green font-bold">✓ Transfer created (value hidden)</p>
+                      <p>Source value: <span className="text-red">${confTransferResult.sourceValue}</span> <span className="text-muted">(private)</span></p>
+                      <p>Recipient commitment: <span className="text-red break-all">{confTransferResult.transfer.commitment.slice(0, 24)}…</span></p>
+                      <p>Unlinkable: <span className="text-green">{confTransferResult.transfer.commitment !== confTransferResult.transfer.recipientNote.commitment ? "fresh commitment" : "same"}</span></p>
+                      <p>Recipient verify: <span className="text-green">{confTransferResult.opened.valid ? "valid ✓" : "invalid"}</span></p>
+                    </div>
+                  )}
+                </ActionCard>
                 <ActionCard step="Shield" title="Shielded Settlement" disabled={busy || !lineAddress}>
                   <p className="text-xs text-muted mb-3">Creates encrypted settlement envelope with Umbra-style stealth addresses. Only commitment hashes on-chain.</p>
                   <button onClick={handleShieldedSettlement} disabled={busy || !lineAddress} className="btn-primary text-sm w-full">{!lineAddress ? "Need credit line" : "Create Shielded Envelope"}</button>

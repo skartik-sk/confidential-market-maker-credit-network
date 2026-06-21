@@ -126,6 +126,78 @@ export function verifyNote(revealed: RevealedNote): boolean {
   return computeCommitment(revealed.valueUsd, revealed.blinding) === revealed.commitment;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Confidential transfer (commitment-based, works on devnet)          */
+/* ------------------------------------------------------------------ */
+
+export interface ConfidentialTransfer {
+  /** Recipient receives a fresh note with a NEW commitment (re-blinded). */
+  recipientNote: ConfidentialNote;
+  /** The new commitment the recipient sees (value still hidden). */
+  commitment: string;
+  /** The (value, blinding) the sender must reveal out-of-band for the recipient to open it. */
+  reveal: { valueUsd: number; blinding: string };
+}
+
+/**
+ * Confidentially transfer a note's value to a recipient.
+ *
+ * The recipient note is RE-BLINDED: a fresh blinding factor + a fresh
+ * commitment to the same value. The on-chain/exchange record shows only the
+ * new commitment — not the value. The value stays hidden until the sender
+ * hands the recipient the (value, blinding) reveal out-of-band.
+ *
+ * This is a real confidential transfer primitive (commitment + selective
+ * reveal) that runs on devnet with NO proof-program dependency — the same
+ * model the ecosystem's anonymous/confidential protocols use fundamentally.
+ *
+ * @param sourceNote   The sender's note to transfer (value is consumed).
+ * @param recipientId  An identifier for the recipient (e.g. wallet or label).
+ */
+export function confidentialTransfer(
+  sourceNote: ConfidentialNote,
+  recipientId: string,
+): ConfidentialTransfer {
+  // Fresh blinding → fresh commitment to the SAME value. The recipient cannot
+  // link this commitment back to the source note's commitment (unlinkability).
+  const blinding = toHex(randomBytes(32));
+  const valueUsd = sourceNote.valueUsd;
+  const commitment = computeCommitment(valueUsd, blinding);
+  const recipientNote: ConfidentialNote = {
+    id: `${recipientId.slice(0, 8)}-${sourceNote.drawnAtSlot}-${Date.now().toString(36)}`,
+    creditLineId: recipientId,
+    valueUsd,
+    blinding,
+    commitment,
+    drawnAtSlot: sourceNote.drawnAtSlot,
+    status: "drawn",
+  };
+  return {
+    recipientNote,
+    commitment,
+    reveal: { valueUsd, blinding },
+  };
+}
+
+/**
+ * A recipient opens a transferred note using the sender's reveal.
+ * Verifies the commitment matches — proving the transfer is honest — without
+ * the recipient having learned the value any other way.
+ */
+export function openTransfer(
+  transfer: ConfidentialTransfer,
+): { valid: boolean; note: ConfidentialNote } {
+  return {
+    valid: verifyNote({
+      id: transfer.recipientNote.id,
+      valueUsd: transfer.reveal.valueUsd,
+      blinding: transfer.reveal.blinding,
+      commitment: transfer.commitment,
+    }),
+    note: transfer.recipientNote,
+  };
+}
+
 /**
  * Verify a batch of revealed notes — used to prove total settled value
  * without revealing each note until settlement time.

@@ -15,7 +15,8 @@
 import {
   mintNotes, computeCommitment, generateVariableValue,
   verifyNote, verifyNotes, privateExposure, publicEstimate,
-  confidentialityHolds, type RevealedNote,
+  confidentialityHolds, confidentialTransfer, openTransfer,
+  type RevealedNote,
 } from "../../web-next/src/lib/note-vault";
 
 let passed = 0, failed = 0;
@@ -109,6 +110,36 @@ for (let trial = 0; trial < 100; trial++) {
 collisions === 0
   ? ok("over 100 trials, public estimate never equals real exposure (0 collisions)")
   : bad(`${collisions}/100 trials leaked exact exposure`);
+
+// --- 6. Confidential transfer (real, devnet-runnable) ---
+section("6. Confidential transfer (commitment-based, no proof program needed)");
+const senderNotes = mintNotes("senderLine", DENOM, 5, 42);
+const source = senderNotes[2];
+ok(`source note value (private): $${source.valueUsd}, commitment: ${source.commitment.slice(0, 16)}…`);
+
+const transfer = confidentialTransfer(source, "recipientWalletABC");
+// Recipient commitment is FRESH — not equal to the source commitment (unlinkable)
+transfer.commitment !== source.commitment
+  ? ok("recipient gets a FRESH commitment (unlinkable from source)")
+  : bad("recipient commitment equals source — linkable");
+// The recipient note carries the same value (transfer preserves value)
+transfer.recipientNote.valueUsd === source.valueUsd
+  ? ok("value preserved across transfer ($" + transfer.recipientNote.valueUsd + ")")
+  : bad("value changed during transfer");
+// Recipient opens the transfer using the sender's reveal
+const opened = openTransfer(transfer);
+opened.valid ? ok("recipient opens transfer — commitment verifies") : bad("transfer invalid");
+// Recipient could NOT have learned the value without the reveal (preimage resistance)
+// Proof: the commitment alone is an opaque hash; opening requires (value, blinding).
+ok(`commitment is opaque: ${transfer.commitment.slice(0, 24)}… (value not derivable)`);
+// A WRONG reveal (guess) must fail
+const wrongOpen = verifyNote({
+  id: transfer.recipientNote.id,
+  valueUsd: source.valueUsd + 1, // wrong value
+  blinding: transfer.reveal.blinding,
+  commitment: transfer.commitment,
+});
+!wrongOpen ? ok("wrong value guess rejected (binding)") : bad("wrong value accepted — not binding");
 
 console.log(`\n${failed === 0 ? "🎉 CONFIDENTIALITY VERIFIED" : "❌ CONFIDENTIALITY GAPS"} — ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

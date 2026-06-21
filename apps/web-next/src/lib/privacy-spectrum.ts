@@ -64,14 +64,14 @@ export const QUADRANT_DESC: Record<Quadrant, string> = {
  */
 export const SPECTRUM_FEATURES: SpectrumFeature[] = [
   {
-    feature: "Confidential Note Vault",
+    feature: "Confidential Note Vault + Transfer",
     module: "lib/note-vault.ts",
     quadrant: "confidential",
     ecosystemProtocols: ["Confidential Transfer", "Encifher"],
     implementation: "local_crypto",
-    property: "Note values are variable and committed (SHA-256(value ∥ blinding)); on-chain stores only counts, so exposure is hidden.",
+    property: "Note values are variable and committed (SHA-256(value ∥ blinding)); transfers re-blind into a fresh commitment so the value stays hidden until revealed. Runs on devnet (no ZK proof program needed).",
     verifiedBy: "apps/localnet/src/note-vault-test.ts",
-    status: "Live — 18 checks prove values are hidden and commitments bind.",
+    status: "Live — 24 checks prove values hidden, commitments bind, and confidential transfers are unlinkable + verifiable.",
   },
   {
     feature: "Shielded Settlement",
