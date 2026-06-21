@@ -1,81 +1,89 @@
 /**
  * MagicBlock ER delegation integration for the confidential-credit-vault.
  *
- * Delegates a credit-line account to a MagicBlock Enhanced Rollup validator
- * so it can be used in sub-millisecond private sessions, then committed back
- * to the on-chain vault.
+ * All three delegation instructions route THROUGH the credit-vault program
+ * (tags 7/8/9), which performs the MagicBlock delegation CPI internally
+ * (programs/credit-vault/src/mb.rs). The client must pass the exact account
+ * lists the on-chain handlers destructure:
  *
- * Delegation flows through MagicBlock's DELEGATION_PROGRAM (not the credit-
- * vault program itself). The vault program only exposes commit/undelegate
- * instructions (indices 8 and 9) that operate on the already-delegated state.
+ *   DelegateCreditLine  (tag 7) -> 7 accounts (see delegateCreditLine)
+ *   CommitCreditLine    (tag 8) -> 4 accounts (see commitCreditLine)
+ *   CommitAndUndelegate (tag 9) -> 4 accounts (see commitAndUndelegate)
+ *
+ * Requires MagicBlock's delegation + magic programs to be deployed on the
+ * cluster (present on devnet). Seeds/validator are pinned in the program.
  */
 
-import {
-  PublicKey,
-  TransactionInstruction,
-  Connection,
-  SYSVAR_RENT_PUBKEY,
-  SystemProgram,
-} from "@solana/web3.js";
+import { PublicKey, TransactionInstruction, Connection } from "@solana/web3.js";
 
 /* ------------------------------------------------------------------ */
-/*  Constants                                                          */
+/*  Constants (mirror programs/credit-vault/src/mb.rs)                 */
 /* ------------------------------------------------------------------ */
 
-/** MagicBlock delegation program on devnet. */
+/** MagicBlock delegation program. */
 export const DELEGATION_PROGRAM_ID = new PublicKey(
   "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMRRSaeSh",
 );
+/** MagicBlock magic program (commit/undelegate target). */
+export const MAGIC_PROGRAM_ID = new PublicKey(
+  "Magic11111111111111111111111111111111111111",
+);
+/** MagicBlock context account. */
+export const MAGIC_CONTEXT_ID = new PublicKey(
+  "MagicContext1111111111111111111111111111111",
+);
+/** System program. */
+const SYSTEM_PROGRAM_ID = new PublicKey(
+  "11111111111111111111111111111111",
+);
 
-/** MagicBlock Enhanced Rollup RPC endpoint (devnet). */
+/** MagicBlock Enhanced Rollup RPC endpoint (devnet, Asia). */
 export const ER_RPC_URL = "https://devnet-as.magicblock.app";
-
 /** MagicBlock TEE RPC endpoint (devnet). */
 export const TEE_RPC_URL = "https://devnet-tee.magicblock.app";
 
-/** Asia-Pacific validator (devnet). */
+/** Asia-Pacific validator (devnet) — pinned in the program. */
 export const VALIDATOR_ASIA = new PublicKey(
   "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57",
 );
-
 /** TEE validator (devnet). */
 export const VALIDATOR_TEE = new PublicKey(
   "MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo",
 );
 
 /* ------------------------------------------------------------------ */
-/*  PDAs                                                               */
+/*  PDAs (seeds MUST match mb.rs exactly)                              */
 /* ------------------------------------------------------------------ */
 
-/**
- * Derive the delegation record PDA for a given credit-line account.
- *
- * Seeds: ["delegation_record", creditLine]
- */
+const SEED_DELEGATION = "delegation";
+const SEED_DELEGATION_METADATA = "delegation-metadata";
+const SEED_BUFFER = "buffer";
+
+/** Delegation record PDA: ["delegation", creditLine] on DELEGATION_PROGRAM. */
 export function delegationRecordPda(creditLine: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("delegation_record"), creditLine.toBuffer()],
+    [Buffer.from(SEED_DELEGATION), creditLine.toBuffer()],
     DELEGATION_PROGRAM_ID,
   )[0];
 }
 
-/**
- * Derive the commit record PDA (used internally by MagicBlock).
- *
- * Seeds: ["commit_record", creditLine]
- */
-export function commitRecordPda(creditLine: PublicKey): PublicKey {
+/** Delegation metadata PDA: ["delegation-metadata", creditLine] on DELEGATION_PROGRAM. */
+export function delegationMetadataPda(creditLine: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("commit_record"), creditLine.toBuffer()],
+    [Buffer.from(SEED_DELEGATION_METADATA), creditLine.toBuffer()],
     DELEGATION_PROGRAM_ID,
   )[0];
 }
 
-/**
- * Derive the MagicBlock ER authority PDA for a given owner.
- *
- * Seeds: ["er_authority", owner]
- */
+/** Delegate buffer PDA: ["buffer", creditLine] on the CREDIT-VAULT program. */
+export function delegateBufferPda(creditLine: PublicKey, ownerProgram: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(SEED_BUFFER), creditLine.toBuffer()],
+    ownerProgram,
+  )[0];
+}
+
+/** ER authority PDA (convenience, unused by current handlers). */
 export function erAuthorityPda(owner: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("er_authority"), owner.toBuffer()],
@@ -84,103 +92,65 @@ export function erAuthorityPda(owner: PublicKey): PublicKey {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Delegation instruction                                             */
+/*  Instruction 7: DelegateCreditLine (routes through credit-vault)    */
 /* ------------------------------------------------------------------ */
 
 /**
- * Create a delegation instruction that delegates a credit-line account to a
- * MagicBlock ER validator.
+ * Delegate a credit-line account to a MagicBlock ER validator.
  *
- * The delegation data format (from mb.rs):
- *   - commit_frequency_ms : u32   (u32::MAX = never auto-commit)
- *   - seeds_length        : u8    (1)
- *   - seed_len            : u8    (11, length of "credit_line")
- *   - seed_data           : bytes ("credit_line")
- *   - is_some             : u8    (1 = validator specified)
- *   - validator           : 32 bytes
+ * The credit-vault program's DelegateCreditLine handler (tag 7) calls
+ * mb.rs::delegate_account, which destructures 7 accounts:
+ *   0. payer            = owner (signer, writable)
+ *   1. pda_acc          = credit line (writable)
+ *   2. owner_program    = credit-vault program (readonly)
+ *   3. buffer_acc       = delegate buffer PDA (writable)
+ *   4. delegation_record  (writable)
+ *   5. delegation_metadata (writable)
+ *   6. system_program   (readonly)
  *
- * This is instruction index 0 (Delegate) on the DELEGATION_PROGRAM.
- *
- * Required accounts (in order):
- *   0. credit_line        (writable, the account to delegate)
- *   1. owner              (signer, authority over the credit line)
- *   2. delegation_record  (writable, PDA)
- *   3. delegation_program (program ID)
- *   4. system_program
+ * The validator + seeds are pinned in the program (VALIDATOR_ASIA,
+ * "credit_line"). Data is just the tag byte [7].
  */
 export function delegateCreditLine(params: {
   creditLine: PublicKey;
   owner: PublicKey;
-  programId: PublicKey;
-  validator: PublicKey;
+  programId: PublicKey; // credit-vault program id
 }): TransactionInstruction {
-  const {
-    creditLine,
-    owner,
-    programId, // the credit-vault program that owns the credit-line account
-    validator,
-  } = params;
-
+  const { creditLine, owner, programId } = params;
+  const buffer = delegateBufferPda(creditLine, programId);
   const delegationRecord = delegationRecordPda(creditLine);
-
-  // Build instruction data
-  const seedLabel = "credit_line";
-  const seedBuf = Buffer.from(seedLabel);
-  // Layout: commit_frequency_ms(4) + seeds_length(1) + seed_len(1) + seed(11) + is_some(1) + validator(32)
-  const data = Buffer.alloc(4 + 1 + 1 + seedBuf.length + 1 + 32);
-  let offset = 0;
-
-  // commit_frequency_ms: u32::MAX means no auto-commit (manual commit only)
-  data.writeUInt32LE(0xffffffff, offset);
-  offset += 4;
-
-  // seeds_length: 1 (single seed)
-  data.writeUInt8(1, offset);
-  offset += 1;
-
-  // seed_len: length of "credit_line" = 11
-  data.writeUInt8(seedBuf.length, offset);
-  offset += 1;
-
-  // seed_data: "credit_line" bytes
-  seedBuf.copy(data, offset);
-  offset += seedBuf.length;
-
-  // is_some: 1 (validator is specified)
-  data.writeUInt8(1, offset);
-  offset += 1;
-
-  // validator: 32 bytes
-  validator.toBuffer().copy(data, offset);
-  offset += 32;
+  const delegationMetadata = delegationMetadataPda(creditLine);
 
   return new TransactionInstruction({
     keys: [
-      { pubkey: creditLine, isSigner: false, isWritable: true },
-      { pubkey: owner, isSigner: true, isWritable: true },
-      { pubkey: delegationRecord, isSigner: false, isWritable: true },
-      { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: owner, isSigner: true, isWritable: true },            // 0 payer
+      { pubkey: creditLine, isSigner: false, isWritable: true },      // 1 pda
+      { pubkey: programId, isSigner: false, isWritable: false },      // 2 owner_program
+      { pubkey: buffer, isSigner: false, isWritable: true },          // 3 buffer
+      { pubkey: delegationRecord, isSigner: false, isWritable: true },// 4 record
+      { pubkey: delegationMetadata, isSigner: false, isWritable: true },// 5 metadata
+      { pubkey: SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },// 6 system
     ],
     programId,
-    data: data.subarray(0, offset),
+    data: Buffer.from([7]),
   });
 }
 
 /* ------------------------------------------------------------------ */
-/*  Commit instruction (index 8 on credit-vault program)               */
+/*  Instruction 8: CommitCreditLine                                    */
 /* ------------------------------------------------------------------ */
 
 /**
- * Create a commit instruction that commits the ER state of a credit-line
- * back to the on-chain vault.
+ * Commit the ER state of a credit-line back on-chain.
  *
- * Instruction index 8 on the credit-vault program.
- * Data: u32 LE = 1 (commit flag).
+ * CommitCreditLine handler (tag 8) -> mb.rs::commit_accounts, which
+ * destructures 4 accounts:
+ *   0. payer         = owner (signer, writable)
+ *   1. committed_acc = credit line (writable)
+ *   2. magic_program (readonly)
+ *   3. magic_context (writable)
  *
- * Required accounts:
- *   0. credit_line        (writable)
- *   1. owner              (signer)
+ * Data is just the tag byte [8].
  */
 export function commitCreditLine(params: {
   creditLine: PublicKey;
@@ -188,40 +158,27 @@ export function commitCreditLine(params: {
   programId: PublicKey;
 }): TransactionInstruction {
   const { creditLine, owner, programId } = params;
-
-  // Instruction tag 8 + data payload (u32 LE = 1)
-  const data = Buffer.alloc(1 + 4);
-  let offset = 0;
-  data.writeUInt8(8, offset);
-  offset += 1;
-  data.writeUInt32LE(1, offset);
-  offset += 4;
-
   return new TransactionInstruction({
     keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
       { pubkey: creditLine, isSigner: false, isWritable: true },
-      { pubkey: owner, isSigner: true, isWritable: false },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
     ],
     programId,
-    data: data.subarray(0, offset),
+    data: Buffer.from([8]),
   });
 }
 
 /* ------------------------------------------------------------------ */
-/*  Commit + Undelegate instruction (index 9)                          */
+/*  Instruction 9: CommitAndUndelegateCreditLine                       */
 /* ------------------------------------------------------------------ */
 
 /**
- * Create a commit-and-undelegate instruction.
+ * Commit and undelegate in one instruction.
  *
- * Instruction index 9 on the credit-vault program.
- * Data: u32 LE = 2 (commit + undelegate).
- *
- * Required accounts:
- *   0. credit_line        (writable)
- *   1. owner              (signer)
- *   2. delegation_record  (writable, PDA)
- *   3. delegation_program
+ * CommitAndUndelegate handler (tag 9) -> mb.rs::commit_and_undelegate,
+ * same 4-account contract as commit. Data is just [9].
  */
 export function commitAndUndelegate(params: {
   creditLine: PublicKey;
@@ -229,25 +186,15 @@ export function commitAndUndelegate(params: {
   programId: PublicKey;
 }): TransactionInstruction {
   const { creditLine, owner, programId } = params;
-  const delegationRecord = delegationRecordPda(creditLine);
-
-  // Instruction tag 9 + data payload (u32 LE = 2)
-  const data = Buffer.alloc(1 + 4);
-  let offset = 0;
-  data.writeUInt8(9, offset);
-  offset += 1;
-  data.writeUInt32LE(2, offset);
-  offset += 4;
-
   return new TransactionInstruction({
     keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
       { pubkey: creditLine, isSigner: false, isWritable: true },
-      { pubkey: owner, isSigner: true, isWritable: false },
-      { pubkey: delegationRecord, isSigner: false, isWritable: true },
-      { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
     ],
     programId,
-    data: data.subarray(0, offset),
+    data: Buffer.from([9]),
   });
 }
 
@@ -256,121 +203,54 @@ export function commitAndUndelegate(params: {
 /* ------------------------------------------------------------------ */
 
 export interface DelegationStatus {
-  /** Whether the credit line is currently delegated. */
   delegated: boolean;
-  /** The delegation record PDA address. */
   recordAddress: PublicKey;
-  /** The validator the account is delegated to (if any). */
+  /** Validator the account is delegated to, if parseable. */
   validator: PublicKey | null;
-  /** The commit frequency in ms (u32::MAX = manual only). */
   commitFrequencyMs: number | null;
-  /** Slot at which the delegation was created. */
-  slot: number | null;
 }
 
 /**
- * Check whether a credit-line account is currently delegated to a MagicBlock
- * ER validator by reading the delegation record PDA.
+ * Check delegation status by reading the delegation record PDA.
+ *
+ * NOTE: the delegation record is written by MagicBlock's delegation program
+ * (Anchor layout). We conservatively report `delegated: true` only when a
+ * record account exists, and do not over-parse its body.
  */
 export async function getDelegationStatus(
   connection: Connection,
   creditLine: PublicKey,
 ): Promise<DelegationStatus> {
   const recordAddress = delegationRecordPda(creditLine);
-
   const accountInfo = await connection.getAccountInfo(recordAddress);
-
   if (!accountInfo || accountInfo.data.length === 0) {
-    return {
-      delegated: false,
-      recordAddress,
-      validator: null,
-      commitFrequencyMs: null,
-      slot: null,
-    };
+    return { delegated: false, recordAddress, validator: null, commitFrequencyMs: null };
   }
-
-  // Parse delegation record (MagicBlock format):
-  // discriminator (8) | commit_frequency_ms (4) | ... | validator (32)
-  const data = accountInfo.data;
-  let offset = 8; // skip discriminator
-
-  // Bounds check: need at least 4 bytes for commit_frequency_ms
-  if (offset + 4 > data.length) {
-    return { delegated: false, recordAddress, validator: null, commitFrequencyMs: null, slot: null };
-  }
-
-  const commitFrequencyMs = data.readUInt32LE(offset);
-  offset += 4;
-
-  // Bounds check: need 1 byte for seeds_length
-  if (offset + 1 > data.length) {
-    return { delegated: false, recordAddress, validator: null, commitFrequencyMs, slot: null };
-  }
-
-  // Skip past seed info to find the validator field.
-  // Layout after commit_frequency_ms:
-  //   seeds_length (1) | [seed_len (1) | seed_data (N)]* | is_some (1) | validator? (32)
-  const seedsLength = data.readUInt8(offset);
-  offset += 1;
-
-  for (let i = 0; i < seedsLength; i++) {
-    if (offset + 1 > data.length) break; // bounds check before reading seed_len
-    const seedLen = data.readUInt8(offset);
-    offset += 1;
-    if (offset + seedLen > data.length) break; // bounds check before skipping seed_data
-    offset += seedLen;
-  }
-
-  // Bounds check: need 1 byte for is_some
-  if (offset + 1 > data.length) {
-    return { delegated: true, recordAddress, validator: null, commitFrequencyMs, slot: null };
-  }
-
-  const isSome = data.readUInt8(offset);
-  offset += 1;
-
-  let validator: PublicKey | null = null;
-  if (isSome === 1 && offset + 32 <= data.length) {
-    validator = new PublicKey(data.subarray(offset, offset + 32));
-  }
-
-  return {
-    delegated: true,
-    recordAddress,
-    validator,
-    commitFrequencyMs,
-    slot: null, // slot is not directly in the delegation record
-  };
+  return { delegated: true, recordAddress, validator: VALIDATOR_ASIA, commitFrequencyMs: null };
 }
 
 /* ------------------------------------------------------------------ */
-/*  Helper: full delegation flow                                       */
+/*  Full delegation flow (convenience)                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * Build a complete delegate-and-commit transaction flow.
- *
- * Returns an object with all the instructions and PDAs needed for a full
- * delegation lifecycle: delegate -> (use in ER) -> commit -> undelegate.
- */
 export function buildDelegationFlow(params: {
   creditLine: PublicKey;
   owner: PublicKey;
   programId: PublicKey;
-  validator?: PublicKey;
 }): {
   delegateIx: TransactionInstruction;
   commitIx: TransactionInstruction;
   commitAndUndelegateIx: TransactionInstruction;
   delegationRecord: PublicKey;
+  buffer: PublicKey;
+  delegationMetadata: PublicKey;
 } {
-  const validator = params.validator ?? VALIDATOR_ASIA;
-
   return {
-    delegateIx: delegateCreditLine({ ...params, validator }),
+    delegateIx: delegateCreditLine(params),
     commitIx: commitCreditLine(params),
     commitAndUndelegateIx: commitAndUndelegate(params),
     delegationRecord: delegationRecordPda(params.creditLine),
+    buffer: delegateBufferPda(params.creditLine, params.programId),
+    delegationMetadata: delegationMetadataPda(params.creditLine),
   };
 }

@@ -55,13 +55,43 @@ async function buildTokenTransferIx(
   return { instructions, fromAta, toAta };
 }
 
-/** Get token balance for any mint */
+/** Get token balance for any mint (reads decimals from the mint, not hardcoded). */
 async function getTokenBalance(connection: any, owner: PublicKey, mint: PublicKey): Promise<number> {
   try {
-    const { getAssociatedTokenAddressSync, getAccount } = await import("@solana/spl-token");
+    const { getAssociatedTokenAddressSync, getAccount, getMint } = await import("@solana/spl-token");
     const ata = getAssociatedTokenAddressSync(mint, owner);
-    const account = await getAccount(connection, ata);
-    return Number(account.amount) / 1e6;
+    const [account, mintInfo] = await Promise.all([getAccount(connection, ata), getMint(connection, mint)]);
+    return Number(account.amount) / 10 ** mintInfo.decimals;
+  } catch { return 0; }
+}
+
+/**
+ * Per-wallet collateral vault keypair (devnet demo escrow). Persisted in
+ * localStorage so deposits/withdrawals move tokens between the wallet ATA and
+ * a genuine separate vault ATA — not a no-op self-transfer.
+ */
+function loadVaultKeypair(walletPubkey: string): any {
+  const key = `cv_vault_${walletPubkey}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const { Keypair } = require("@solana/web3.js");
+      return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
+    }
+  } catch { /* fall through to create */ }
+  const { Keypair } = require("@solana/web3.js");
+  const kp = Keypair.generate();
+  try { localStorage.setItem(key, JSON.stringify(Array.from(kp.secretKey))); } catch { /* ignore */ }
+  return kp;
+}
+
+/** Vault collateral balance for a mint (separate from the wallet balance). */
+async function getVaultBalance(connection: any, vault: PublicKey, mint: PublicKey): Promise<number> {
+  try {
+    const { getAssociatedTokenAddressSync, getAccount, getMint } = await import("@solana/spl-token");
+    const ata = getAssociatedTokenAddressSync(mint, vault);
+    const [account, mintInfo] = await Promise.all([getAccount(connection, ata), getMint(connection, mint)]);
+    return Number(account.amount) / 10 ** mintInfo.decimals;
   } catch { return 0; }
 }
 import { computeRiskScore, verifyRiskCommitment, RiskEngine } from "@/lib/risk-engine";
@@ -79,7 +109,7 @@ import {
   ER_RPC_URL,
   VALIDATOR_ASIA,
 } from "@/lib/magicblock";
-import { confidentialTransferStatus, createConfidentialMint } from "@/lib/token2022";
+import { confidentialTransferStatus } from "@/lib/token2022";
 import {
   saveUserState,
   loadUserState,
@@ -123,6 +153,8 @@ export function RealApp() {
   const [usdcBal, setUsdcBal] = useState<number>(0);
   const [testTokenMint, setTestTokenMint] = useState<string>("");
   const [depositAmount, setDepositAmount] = useState(1000);
+  const [withdrawAmount, setWithdrawAmount] = useState(500);
+  const [vaultBal, setVaultBal] = useState<number>(0);
   const [riskEngine] = useState(() => new RiskEngine({ maxDrawdownBps: 1200, maxDailySpendUsd: 2500 }));
   const [riskResult, setRiskResult] = useState<any>(null);
   const [delegationStatus, setDelegationStatus] = useState<any>(null);
@@ -424,12 +456,17 @@ export function RealApp() {
     setBusy(true);
     try {
       const mint = new PublicKey(testTokenMint);
-      log(`Depositing $${depositAmount.toLocaleString()} as collateral...`);
-      const { instructions } = await buildTokenTransferIx(wallet.publicKey, wallet.publicKey, mint, depositAmount);
+      const vault = loadVaultKeypair(wallet.publicKey.toBase58());
+      // Real token movement: wallet ATA -> vault (collateral escrow) ATA.
+      log(`Depositing $${depositAmount.toLocaleString()} into collateral vault ${vault.publicKey.toBase58().slice(0, 8)}…`);
+      const { instructions } = await buildTokenTransferIx(wallet.publicKey, vault.publicKey, mint, depositAmount);
       const sig = await sendTxBatch(instructions, "deposit_usdc");
-      log(`Deposited $${depositAmount.toLocaleString()}! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
-      const bal = await getTokenBalance(connection, wallet.publicKey, mint);
-      setUsdcBal(bal);
+      log(`Deposited $${depositAmount.toLocaleString()} into vault → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      const [bal, vBal] = await Promise.all([
+        getTokenBalance(connection, wallet.publicKey, mint),
+        getVaultBalance(connection, vault.publicKey, mint),
+      ]);
+      setUsdcBal(bal); setVaultBal(vBal);
     } catch (e: any) { log(`Deposit failed: ${e.message}`); }
     setBusy(false);
   }, [wallet.publicKey, connection, depositAmount, testTokenMint, log, sendTxBatch]);
@@ -440,15 +477,22 @@ export function RealApp() {
     setBusy(true);
     try {
       const mint = new PublicKey(testTokenMint);
-      log(`Withdrawing $${depositAmount.toLocaleString()}...`);
-      const { instructions } = await buildTokenTransferIx(wallet.publicKey, wallet.publicKey, mint, depositAmount);
-      const sig = await sendTxBatch(instructions, "withdraw_usdc");
-      log(`Withdrawn $${depositAmount.toLocaleString()}! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
-      const bal = await getTokenBalance(connection, wallet.publicKey, mint);
-      setUsdcBal(bal);
+      const vault = loadVaultKeypair(wallet.publicKey.toBase58());
+      // Real token movement: vault ATA -> wallet ATA. Vault signs (partialSign).
+      const available = await getVaultBalance(connection, vault.publicKey, mint);
+      if (available < withdrawAmount) { log(`Vault only has $${available.toLocaleString()} (asked $${withdrawAmount.toLocaleString()})`); setBusy(false); return; }
+      log(`Withdrawing $${withdrawAmount.toLocaleString()} from vault…`);
+      const { instructions } = await buildTokenTransferIx(vault.publicKey, wallet.publicKey, mint, withdrawAmount);
+      const sig = await sendTxBatch(instructions, "withdraw_usdc", [vault]);
+      log(`Withdrew $${withdrawAmount.toLocaleString()} from vault → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      const [bal, vBal] = await Promise.all([
+        getTokenBalance(connection, wallet.publicKey, mint),
+        getVaultBalance(connection, vault.publicKey, mint),
+      ]);
+      setUsdcBal(bal); setVaultBal(vBal);
     } catch (e: any) { log(`Withdraw failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, connection, depositAmount, testTokenMint, log, sendTxBatch]);
+  }, [wallet.publicKey, connection, withdrawAmount, testTokenMint, log, sendTxBatch]);
 
   /* ================================================================ */
   /*  RISK TAB ACTIONS                                                */
@@ -523,11 +567,10 @@ export function RealApp() {
         creditLine: new PublicKey(lineAddress),
         owner: wallet.publicKey,
         programId: PROGRAM_ID,
-        validator: VALIDATOR_ASIA,
       });
       const sig = await sendTx(ix, "delegate_mb");
       log(`Delegated! → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
-      log(`  ER RPC: ${ER_RPC_URL}`);
+      log(`  ER RPC: ${ER_RPC_URL} · Validator: ${VALIDATOR_ASIA.toBase58().slice(0, 16)}…`);
     } catch (e: any) { log(`Delegation failed: ${e.message}`); }
     setBusy(false);
   }, [wallet, lineAddress, sendTx, log]);
@@ -664,16 +707,25 @@ export function RealApp() {
               {/* USDC */}
               {tab === "usdc" && (<>
                 <div className="card p-5">
-                  <h4 className="font-bold mb-3">USDC Balance</h4>
-                  <p className="mono text-2xl font-bold text-green mb-3">{usdcBal.toFixed(2)} <span className="text-sm text-muted">USDC</span></p>
+                  <div className="grid grid-cols-2 gap-4 mb-3">
+                    <div>
+                      <h4 className="font-bold mb-1 text-sm">Wallet</h4>
+                      <p className="mono text-xl font-bold text-green">{usdcBal.toFixed(2)} <span className="text-xs text-muted">USDC</span></p>
+                    </div>
+                    <div>
+                      <h4 className="font-bold mb-1 text-sm">Collateral Vault</h4>
+                      <p className="mono text-xl font-bold text-red">{vaultBal.toFixed(2)} <span className="text-xs text-muted">USDC</span></p>
+                    </div>
+                  </div>
                   <button onClick={handleMintTestUsdc} disabled={busy} className="btn-primary text-sm w-full">Mint 10,000 Test USDC</button>
                 </div>
                 <ActionCard step="Deposit" title="Deposit USDC Collateral" disabled={busy}>
-                  <Field label="Amount (USD)" value={depositAmount} onChange={setDepositAmount} />
-                  <div className="flex gap-2 mt-3">
-                    <button onClick={handleDepositUsdc} disabled={busy} className="btn-primary text-sm flex-1">Deposit</button>
-                    <button onClick={handleWithdrawUsdc} disabled={busy} className="btn-ghost text-sm flex-1">Withdraw</button>
-                  </div>
+                  <Field label="Deposit Amount (USD)" value={depositAmount} onChange={setDepositAmount} />
+                  <button onClick={handleDepositUsdc} disabled={busy} className="btn-primary text-sm w-full mt-3">Deposit to Vault</button>
+                </ActionCard>
+                <ActionCard step="Withdraw" title="Withdraw from Vault" disabled={busy}>
+                  <Field label="Withdraw Amount (USD)" value={withdrawAmount} onChange={setWithdrawAmount} min={1} max={vaultBal} />
+                  <button onClick={handleWithdrawUsdc} disabled={busy || vaultBal <= 0} className="btn-ghost text-sm w-full mt-3">{vaultBal <= 0 ? "Vault empty" : "Withdraw to Wallet"}</button>
                 </ActionCard>
               </>)}
 

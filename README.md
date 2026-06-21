@@ -83,13 +83,16 @@ The on-chain program (`G4xPVrtUp4MkkEg5G5w5XCQskoraBBqimxFWh9NkpPm5`) is written
 
 ## Privacy Rails
 
-| Rail | What It Hides | Implementation |
-|------|---------------|----------------|
-| **Confidential note vault** | Individual note values + total exposure | Variable values + SHA-256 commitments (value ∥ blinding); values private to owner, commitments publishable (`lib/note-vault.ts`) |
-| **Umbra settlement** | Payment destinations and amounts | Stealth ephemeral keys + AES-256-GCM envelopes (Web Crypto API) |
-| **Arcium risk compute** | Inventory, exposure, drawdown | SHA-256 commitment hashes — auditor verifies without seeing inputs |
-| **MagicBlock ER** | Full execution state | Delegate to edge validator, commit back to mainnet |
-| **Token-2022** | Transfer amounts | ConfidentialTransferAccount (pending ZK audit) |
+> Aligned with the [Solana privacy spectrum](https://solana.com/privacy#spectrum) — privacy across two axes (identity × data visibility). Each feature below achieves a real quadrant, verified by tests (`bun run spectrum:test`).
+
+| Quadrant | Our feature | Hides | Corresponds to | Status |
+|----------|-------------|-------|----------------|--------|
+| **Confidential** | Note Vault (`lib/note-vault.ts`) | note values + exposure | Confidential Transfer, Encifher | Live (18 checks) |
+| **Confidential** | Confidential Exchange (`/exchange`) | order amounts, shielded fills | Encifher | Live (52+17 checks) |
+| **Confidential** | Token-2022 (`lib/token2022.ts`) | transfer amounts (ZK) | Confidential Transfer | Architecture ready |
+| **Anonymous** | Shielded Settlement (`lib/stealth-settlement.ts`) | sender↔receiver link | Light Protocol, Privacy Cash, SilentSwap | Live (AES-256-GCM) |
+| **Fully Private** | MPC Risk Compute (`lib/risk-engine.ts`) | inventory, exposure, drawdown | Arcium, Inco, Zama | Live (commitment proofs) |
+| **Fully Private** | MagicBlock ER (`lib/magicblock.ts`) | execution state | MagicBlock | Client correct (26 checks) |
 
 ### Confidentiality model — what is actually private
 

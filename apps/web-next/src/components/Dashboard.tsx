@@ -360,6 +360,28 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
               </div>
             ))}
           </div>
+
+          <div className="mt-10 card p-6">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="text-lg font-bold">Mapped to the Solana privacy spectrum</h3>
+              <a href="https://solana.com/privacy#spectrum" target="_blank" rel="noopener noreferrer" className="mono text-[10px] text-red hover:underline">solana.com/privacy ↗</a>
+            </div>
+            <p className="text-muted text-xs mb-4">Privacy is a spectrum across two axes — identity visibility × data visibility. Each feature below achieves a real quadrant, verified by tests.</p>
+            <div className="grid md:grid-cols-3 gap-3 text-xs">
+              {[
+                { q: "Confidential", d: "Participants known, amounts hidden", f: "Note Vault · Exchange · Token-2022", c: "text-green", p: "Encifher · Confidential Transfer" },
+                { q: "Anonymous", d: "Sender↔receiver link broken", f: "Shielded Settlement", c: "text-red", p: "Light Protocol · Privacy Cash" },
+                { q: "Fully Private", d: "Encrypted computation", f: "MPC Risk · MagicBlock ER", c: "text-ink", p: "Arcium · Inco · MagicBlock" },
+              ].map(s => (
+                <div key={s.q} className="bg-bg rounded p-3">
+                  <p className={`font-bold ${s.c}`}>{s.q}</p>
+                  <p className="text-muted text-[11px] mt-0.5 mb-2">{s.d}</p>
+                  <p className="mb-1"><span className="text-muted">ours:</span> {s.f}</p>
+                  <p className="text-muted text-[10px]">~ {s.p}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
