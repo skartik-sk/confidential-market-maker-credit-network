@@ -78,8 +78,8 @@ body {
   border-color: var(--color-line-2);
 }
 
-/* Monospace data */
-.mono { font-family: var(--font-mono); }
+/* Monospace data — tabular-nums for perfect column alignment in tables/books */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
 /* Red accent button */
 .btn-primary {

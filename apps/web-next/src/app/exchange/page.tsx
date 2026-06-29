@@ -262,6 +262,21 @@ export default function ExchangePage() {
       </header>
 
       <main className="max-w-[1840px] mx-auto px-5 py-4">
+        {/* Confidentiality banner — the product signature */}
+        <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-line bg-gradient-to-r from-paper via-paper to-red-soft/40 px-5 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-soft border border-red/20 text-base">🔒</div>
+            <div>
+              <p className="text-sm font-bold leading-tight">Confidential note exchange</p>
+              <p className="text-[11px] text-muted leading-tight">Every fill settles through a shielded AES-256-GCM envelope — only commitments land on-chain.</p>
+            </div>
+          </div>
+          <div className="hidden md:flex items-center gap-2 text-[10px] mono">
+            <span className="px-2 py-1 rounded-full bg-green-soft text-green border border-green/20">VALUES HIDDEN</span>
+            <span className="px-2 py-1 rounded-full bg-bg text-muted border border-line">OFF-CHAIN BOOK</span>
+          </div>
+        </div>
+
         {/* Market selector */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
           {markets.map(m => {
@@ -474,7 +489,7 @@ export default function ExchangePage() {
                     <td className="px-4 py-2 text-right font-semibold text-green">${l.askPriceUsd.toLocaleString()}</td>
                     <td className="px-4 py-2 text-right text-red">{(l.discountBps / 100).toFixed(2)}</td>
                     <td className="px-4 py-2 text-right text-green font-medium">{(l.yieldBps / 100).toFixed(1)}</td>
-                    <td className="px-4 py-2 text-muted text-[11px]">{l.privacy}</td>
+                    <td className="px-4 py-2 text-[11px]"><span className="px-1.5 py-0.5 rounded bg-bg border border-line text-muted">{l.privacy}</span></td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => handleBuy(l.id)} disabled={busy || !connected}
                         className="opacity-0 group-hover:opacity-100 text-[10px] px-2 py-1 rounded bg-green text-paper disabled:opacity-30 transition-opacity">Buy</button>
