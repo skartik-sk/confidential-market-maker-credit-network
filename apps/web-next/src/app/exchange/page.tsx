@@ -20,8 +20,12 @@ const WalletMultiButtonDynamic = dynamic(
 interface Market {
   symbol: string; asset: string; maturityDays: number; baseNoteSizeUsd: number;
   lastPrice: number; change24hBps: number; volume24hUsd: number; high24h: number; low24h: number;
+  // Real live spot data (merged from price feed)
+  spotPriceUsd: number | null;
+  spotChange24hPct: number | null;
+  spotMarketCapUsd: number | null;
 }
-interface Candle { time: number; open: number; high: number; low: number; close: number; volumeUsd: number; }
+interface Candle { time: number; open: number; high: number; low: number; close: number; volumeUsd?: number; }
 interface NoteListing {
   id: string; seller: string; noteCount: number; noteSizeUsd: number; faceValueUsd: number;
   askPriceUsd: number; discountBps: number; yieldBps: number; daysToMaturity: number;
@@ -61,19 +65,19 @@ function Sparkline({ candles, up }: { candles: Candle[]; up: boolean }) {
 /* ------------------------------------------------------------------ */
 
 function CandleChart({ candles }: { candles: Candle[] }) {
-  const W = 760, H = 340, PAD_L = 8, PAD_R = 58, PAD_T = 10, PAD_B = 16;
-  const VOL_H = 44; // volume band height
+  const W = 760, H = 340, PAD_L = 8, PAD_R = 64, PAD_T = 10, PAD_B = 16;
   if (candles.length === 0)
-    return <div className="h-[340px] flex items-center justify-center text-muted text-sm">Loading chart…</div>;
+    return <div className="h-[340px] flex items-center justify-center text-muted text-sm">No live data — retrying…</div>;
   const prices = candles.flatMap(c => [c.high, c.low]);
   const min = Math.min(...prices), max = Math.max(...prices);
-  const range = max - min || 0.001;
-  const priceTop = PAD_T, priceBot = H - PAD_B - VOL_H;
+  const range = max - min || max * 0.01;
+  const priceTop = PAD_T, priceBot = H - PAD_B;
   const y = (p: number) => priceTop + (1 - (p - min) / range) * (priceBot - priceTop);
   const cw = (W - PAD_L - PAD_R) / candles.length;
   const bodyW = Math.max(2, cw * 0.62);
   const gridLines = 4;
-  const maxVol = Math.max(...candles.map(c => c.volumeUsd), 1);
+  // Format a real USD price compactly ($74.50 / $58,786)
+  const fmt = (p: number) => p >= 1000 ? `$${(p / 1000).toFixed(2)}k` : `$${p.toFixed(2)}`;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
@@ -83,7 +87,7 @@ function CandleChart({ candles }: { candles: Candle[] }) {
         const yy = y(p);
         return <g key={i}>
           <line x1={PAD_L} y1={yy} x2={W - PAD_R} y2={yy} stroke="#ece8e3" strokeWidth={0.5} />
-          <text x={W - PAD_R + 4} y={yy + 3} fontSize={9} fill="#9a928a" className="mono">{(p * 100).toFixed(1)}</text>
+          <text x={W - PAD_R + 4} y={yy + 3} fontSize={9} fill="#9a928a" className="mono">{fmt(p)}</text>
         </g>;
       })}
       {/* candles */}
@@ -93,11 +97,9 @@ function CandleChart({ candles }: { candles: Candle[] }) {
         const color = up ? "#1fad60" : "#dc2b28";
         const yO = y(c.open), yC = y(c.close), yH = y(c.high), yL = y(c.low);
         const top = Math.min(yO, yC), h = Math.max(1, Math.abs(yC - yO));
-        const volH = (c.volumeUsd / maxVol) * (VOL_H - 6);
         return <g key={i}>
           <line x1={cx} y1={yH} x2={cx} y2={yL} stroke={color} strokeWidth={1} />
           <rect x={cx - bodyW / 2} y={top} width={bodyW} height={h} fill={color} rx={0.5} />
-          <rect x={cx - bodyW / 2} y={H - PAD_B - volH} width={bodyW} height={volH} fill={color} opacity={0.22} />
         </g>;
       })}
       {/* last price line + tag */}
@@ -109,7 +111,7 @@ function CandleChart({ candles }: { candles: Candle[] }) {
         return <g>
           <line x1={PAD_L} y1={yy} x2={W - PAD_R} y2={yy} stroke={color} strokeWidth={0.8} strokeDasharray="3 3" />
           <rect x={W - PAD_R} y={yy - 8} width={PAD_R} height={16} fill={color} rx={2} />
-          <text x={W - PAD_R + 4} y={yy + 3} fontSize={9.5} fontWeight={700} fill="#fff" className="mono">{(last * 100).toFixed(2)}</text>
+          <text x={W - PAD_R + 4} y={yy + 3} fontSize={9} fontWeight={700} fill="#fff" className="mono">{fmt(last)}</text>
         </g>;
       })()}
     </svg>
@@ -281,8 +283,10 @@ export default function ExchangePage() {
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
           {markets.map(m => {
             const isActive = activeMarket === m.symbol;
-            const up = m.change24hBps >= 0;
+            const live = m.spotPriceUsd != null;
+            const up = (m.spotChange24hPct ?? 0) >= 0;
             const sp = marketCandles[m.symbol] ?? [];
+            const fmtSpot = (p: number) => p >= 1000 ? `$${(p / 1000).toFixed(1)}k` : `$${p.toFixed(2)}`;
             return (
               <button key={m.symbol} onClick={() => setActiveMarket(m.symbol)}
                 className={`shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-xl border transition-all ${isActive ? "border-red bg-paper shadow-sm" : "border-line bg-paper hover:border-red/30"}`}>
@@ -290,10 +294,11 @@ export default function ExchangePage() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold">{m.symbol}</span>
                     {isActive && <span className="w-1 h-1 rounded-full bg-red" />}
+                    {live && <span className="w-1.5 h-1.5 rounded-full bg-green animate-glow" title="live price" />}
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-[11px] mono font-semibold">{(m.lastPrice * 100).toFixed(2)}</span>
-                    <span className={`text-[10px] mono ${up ? "text-green" : "text-red"}`}>{up ? "▲" : "▼"}{(Math.abs(m.change24hBps) / 100).toFixed(2)}%</span>
+                    <span className="text-[11px] mono font-semibold">{live ? fmtSpot(m.spotPriceUsd!) : "—"}</span>
+                    {live && <span className={`text-[10px] mono ${up ? "text-green" : "text-red"}`}>{up ? "▲" : "▼"}{Math.abs(m.spotChange24hPct!).toFixed(2)}%</span>}
                   </div>
                 </div>
                 <Sparkline candles={sp} up={up} />
@@ -314,18 +319,25 @@ export default function ExchangePage() {
                       <div className="flex items-center gap-2">
                         <h2 className="text-xl font-bold tracking-tight">{currentMarket.symbol}</h2>
                         <span className="text-[10px] mono text-muted px-1.5 py-0.5 border border-line rounded">{currentMarket.asset} · {currentMarket.maturityDays}d</span>
+                        {currentMarket.spotPriceUsd != null && <span className="text-[10px] mono text-green px-1.5 py-0.5 bg-green-soft border border-green/20 rounded flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green animate-glow" />LIVE</span>}
                       </div>
                       <div className="flex items-baseline gap-2 mt-1">
-                        <span className="text-2xl font-bold mono">{(currentMarket.lastPrice * 100).toFixed(2)}</span>
-                        <span className={`text-sm mono font-semibold ${currentMarket.change24hBps >= 0 ? "text-green" : "text-red"}`}>
-                          {currentMarket.change24hBps >= 0 ? "+" : ""}{(currentMarket.change24hBps / 100).toFixed(2)}%
-                        </span>
+                        {(() => {
+                          const p = currentMarket.spotPriceUsd;
+                          const ch = currentMarket.spotChange24hPct;
+                          const fmtSpot = (v: number) => v >= 1000 ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : `$${v.toFixed(2)}`;
+                          return <>
+                            <span className="text-2xl font-bold mono">{p != null ? fmtSpot(p) : "—"}</span>
+                            {ch != null && <span className={`text-sm mono font-semibold ${ch >= 0 ? "text-green" : "text-red"}`}>{ch >= 0 ? "+" : ""}{ch.toFixed(2)}%</span>}
+                          </>;
+                        })()}
                       </div>
+                      <p className="text-[10px] mono text-muted mt-0.5">{currentMarket.asset} spot · {currentMarket.baseNoteSizeUsd >= 1000 ? `$${(currentMarket.baseNoteSizeUsd / 1000).toFixed(0)}k` : `$${currentMarket.baseNoteSizeUsd}`}/note face · note market {(currentMarket.lastPrice * 100).toFixed(1)}% of par</p>
                     </div>
                     <div className="flex gap-5 text-[11px] mono pb-1">
-                      <Stat label="24h High" value={(currentMarket.high24h * 100).toFixed(2)} />
-                      <Stat label="24h Low" value={(currentMarket.low24h * 100).toFixed(2)} />
-                      <Stat label="24h Vol" value={`$${(currentMarket.volume24hUsd / 1000).toFixed(1)}k`} />
+                      {currentMarket.spotMarketCapUsd != null && <Stat label="Mkt Cap" value={`$${(currentMarket.spotMarketCapUsd / 1e9).toFixed(1)}B`} />}
+                      <Stat label="Note Mkt" value={`${(currentMarket.lastPrice * 100).toFixed(1)}%`} />
+                      <Stat label="Best APY" value={`${(Math.abs(currentMarket.change24hBps) / 100).toFixed(1)}%`} />
                     </div>
                   </div>
                   <div className="flex gap-1">
@@ -341,8 +353,8 @@ export default function ExchangePage() {
               <CandleChart candles={candles} />
             </div>
             <div className="px-5 py-2 border-t border-line flex items-center justify-between">
-              <p className="text-[10px] mono text-muted">Price = % of note face value (par = 100). Lower = bigger discount = higher yield.</p>
-              <span className="text-[10px] mono text-muted">Vol bars below</span>
+              <p className="text-[10px] mono text-muted">Live {currentMarket?.asset ?? "asset"} spot (CoinGecko). Credit notes denominated in this asset trade at a discount shown in the order book.</p>
+              {candles.length > 0 && <span className="text-[10px] mono text-green">{candles.length} candles · live</span>}
             </div>
           </section>
 
@@ -367,11 +379,11 @@ export default function ExchangePage() {
                 </div>;
               })}
             </div>
-            {/* Mid / spread */}
+            {/* Mid / spread — note market price (% of par) */}
             <div className="px-3 py-2 border-y border-line bg-bg flex items-center justify-between">
               <div>
                 <span className="text-base font-bold mono">{currentMarket ? (currentMarket.lastPrice * 100).toFixed(2) : "—"}</span>
-                <span className="text-[10px] mono text-muted ml-1">≈ ${((currentMarket?.lastPrice ?? 0) * (currentMarket?.baseNoteSizeUsd ?? 1000)).toFixed(0)}/note</span>
+                <span className="text-[10px] mono text-muted ml-1">% of par (note market)</span>
               </div>
               {spread != null && <span className="text-[10px] mono text-muted">spread {(spread / 100).toFixed(2)}</span>}
             </div>
