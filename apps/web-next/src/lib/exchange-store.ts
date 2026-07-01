@@ -151,11 +151,18 @@ function ensureSeeded(): void {
 
   // Markets: asset + tenor pairs with distinct baseline discounts.
   const marketDefs: Array<{ symbol: string; asset: string; maturityDays: number; baseNoteSizeUsd: number; baseline: number; seed: number }> = [
-    { symbol: "USDC-30D", asset: "USDC", maturityDays: 30, baseNoteSizeUsd: 1000, baseline: 0.965, seed: 101 },
-    { symbol: "USDC-90D", asset: "USDC", maturityDays: 90, baseNoteSizeUsd: 5000, baseline: 0.955, seed: 202 },
-    { symbol: "SOL-14D", asset: "SOL", maturityDays: 14, baseNoteSizeUsd: 2500, baseline: 0.975, seed: 303 },
-    { symbol: "ETH-45D", asset: "ETH", maturityDays: 45, baseNoteSizeUsd: 2000, baseline: 0.970, seed: 404 },
-    { symbol: "BTC-60D", asset: "BTC", maturityDays: 60, baseNoteSizeUsd: 10000, baseline: 0.985, seed: 505 },
+    { symbol: "USDC-7D",  asset: "USDC", maturityDays: 7,  baseNoteSizeUsd: 1000, baseline: 0.985, seed: 101 },
+    { symbol: "USDC-30D", asset: "USDC", maturityDays: 30, baseNoteSizeUsd: 1000, baseline: 0.965, seed: 102 },
+    { symbol: "USDC-90D", asset: "USDC", maturityDays: 90, baseNoteSizeUsd: 5000, baseline: 0.955, seed: 103 },
+    { symbol: "SOL-7D",   asset: "SOL",  maturityDays: 7,  baseNoteSizeUsd: 1000, baseline: 0.980, seed: 201 },
+    { symbol: "SOL-14D",  asset: "SOL",  maturityDays: 14, baseNoteSizeUsd: 2500, baseline: 0.975, seed: 202 },
+    { symbol: "ETH-14D",  asset: "ETH",  maturityDays: 14, baseNoteSizeUsd: 1000, baseline: 0.978, seed: 301 },
+    { symbol: "ETH-45D",  asset: "ETH",  maturityDays: 45, baseNoteSizeUsd: 2000, baseline: 0.970, seed: 302 },
+    { symbol: "BTC-30D",  asset: "BTC",  maturityDays: 30, baseNoteSizeUsd: 5000, baseline: 0.982, seed: 401 },
+    { symbol: "BTC-60D",  asset: "BTC",  maturityDays: 60, baseNoteSizeUsd: 10000, baseline: 0.985, seed: 402 },
+    { symbol: "JUP-14D",  asset: "JUP",  maturityDays: 14, baseNoteSizeUsd: 500, baseline: 0.960, seed: 501 },
+    { symbol: "BONK-7D",  asset: "BONK", maturityDays: 7,  baseNoteSizeUsd: 250, baseline: 0.945, seed: 601 },
+    { symbol: "WIF-21D",  asset: "WIF",  maturityDays: 21, baseNoteSizeUsd: 500, baseline: 0.965, seed: 701 },
   ];
 
   for (const def of marketDefs) {

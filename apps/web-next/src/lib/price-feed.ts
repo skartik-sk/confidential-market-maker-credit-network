@@ -18,10 +18,13 @@ export const ASSET_COIN_ID: Record<string, string> = {
   ETH: "ethereum",
   BTC: "bitcoin",
   USDC: "usd-coin",
+  JUP: "jupiter-exchange-solana",
+  BONK: "bonk",
+  WIF: "dogwifcoin",
 };
 
 export const ASSET_DECIMALS: Record<string, number> = {
-  SOL: 9, ETH: 8, BTC: 8, USDC: 6,
+  SOL: 9, ETH: 8, BTC: 8, USDC: 6, JUP: 6, BONK: 5, WIF: 6,
 };
 
 /* ------------------------------------------------------------------ */

@@ -2,10 +2,11 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import Link from "next/link";
 import { createShieldedEnvelope } from "@/lib/stealth-settlement";
+import { mintNotes } from "@/lib/note-vault";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
 
 const WalletMultiButtonDynamic = dynamic(
@@ -124,7 +125,36 @@ function CandleChart({ candles }: { candles: Candle[] }) {
 
 export default function ExchangePage() {
   const wallet = useWallet();
+  const { connection } = useConnection();
   const [busy, setBusy] = useState(false);
+
+  /** Submit a REAL on-chain trade settlement (devnet). Records only a
+   *  commitment in a Memo — the value stays confidential. Returns the tx
+   *  signature, or null if the wallet can't sign. */
+  const settleOnChain = useCallback(async (params: {
+    side: "buy" | "sell";
+    market: string;
+    listingId: string;
+    settlementId: string;
+    commitment: string;
+  }): Promise<string | null> => {
+    if (!wallet.publicKey || !wallet.signTransaction) return null;
+    // Memo contains ONLY the commitment — never the note value. This is the
+    // on-chain settlement record (off-chain order matching + on-chain settle).
+    const memo = `MUTE:${params.side}:${params.market}:${params.listingId}:${params.commitment.slice(0, 16)}:${params.settlementId.slice(0, 12)}`;
+    const memoIx = new TransactionInstruction({
+      keys: [],
+      programId: new PublicKey("MemoSq4gqABAXKB86ZjJ4kLRvqJUa1LxeufFwvYcbLH"),
+      data: Buffer.from(memo, "utf-8"),
+    });
+    const tx = new Transaction().add(memoIx);
+    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    tx.feePayer = wallet.publicKey;
+    const signed = await wallet.signTransaction(tx);
+    const sig = await connection.sendRawTransaction(signed.serialize());
+    await connection.confirmTransaction(sig, "confirmed");
+    return sig;
+  }, [wallet, connection]);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeMarket, setActiveMarket] = useState("USDC-30D");
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -205,10 +235,17 @@ export default function ExchangePage() {
       const data = await res.json();
       if (!res.ok) { addLog(`Sell failed: ${data.error}`); setBusy(false); return; }
       addLog(`✓ Listed ${data.listing.id} — ${sellDiscountBps / 100}% disc, ${(sellYield / 100).toFixed(1)}% APY`);
+      // Mint confidential notes for the listing + record the ask ON-CHAIN (devnet).
+      const listed = mintNotes(data.listing.creditLineId, noteSizeUsd, noteCount, Date.now());
+      const commitment = listed[0].commitment;
+      try {
+        const sig = await settleOnChain({ side: "sell", market: activeMarket, listingId: data.listing.id, settlementId: data.listing.id, commitment });
+        if (sig) addLog(`🔗 Ask recorded on-chain ✓ → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      } catch (e: any) { addLog(`On-chain record failed: ${e.message}`); }
       await refresh();
     } catch (e: any) { addLog(`Sell failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, noteCount, noteSizeUsd, pricePct, privacy, activeMarket, currentMarket, sellAskPrice, sellDiscountBps, sellYield, addLog, refresh]);
+  }, [wallet.publicKey, noteCount, noteSizeUsd, pricePct, privacy, activeMarket, currentMarket, sellAskPrice, sellDiscountBps, sellYield, addLog, refresh, settleOnChain]);
 
   /* Buy: fill cheapest ask */
   const handleBuy = useCallback(async (listingId?: string) => {
@@ -232,10 +269,17 @@ export default function ExchangePage() {
       const data = await res.json();
       if (!res.ok) { addLog(`Buy failed: ${data.error}`); setBusy(false); return; }
       addLog(`✓ Filled ${data.trade.id} — shielded ${data.trade.settlementId}`);
+      // Mint confidential notes for what was bought + settle ON-CHAIN (devnet).
+      const bought = mintNotes(target.creditLineId, target.noteSizeUsd, target.noteCount, Date.now());
+      const commitment = bought[0].commitment;
+      try {
+        const sig = await settleOnChain({ side: "buy", market: activeMarket, listingId: target.id, settlementId: env.envelope.settlementId, commitment });
+        if (sig) addLog(`🔗 On-chain settle ✓ → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      } catch (e: any) { addLog(`On-chain settle failed: ${e.message}`); }
       await refresh();
     } catch (e: any) { addLog(`Buy failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, marketListings, addLog, refresh]);
+  }, [wallet.publicKey, marketListings, addLog, refresh, settleOnChain, activeMarket]);
 
   const bestAsk = useMemo(() => [...marketListings].sort((a, b) => a.askPriceUsd - b.askPriceUsd)[0], [marketListings]);
   const spread = book && book.asks.length && book.bids.length
@@ -264,21 +308,6 @@ export default function ExchangePage() {
       </header>
 
       <main className="max-w-[1840px] mx-auto px-5 py-4">
-        {/* Confidentiality banner — the product signature */}
-        <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-line bg-gradient-to-r from-paper via-paper to-red-soft/40 px-5 py-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-soft border border-red/20 text-base">🔒</div>
-            <div>
-              <p className="text-sm font-bold leading-tight">Confidential note exchange</p>
-              <p className="text-[11px] text-muted leading-tight">Every fill settles through a shielded AES-256-GCM envelope — only commitments land on-chain.</p>
-            </div>
-          </div>
-          <div className="hidden md:flex items-center gap-2 text-[10px] mono">
-            <span className="px-2 py-1 rounded-full bg-green-soft text-green border border-green/20">VALUES HIDDEN</span>
-            <span className="px-2 py-1 rounded-full bg-bg text-muted border border-line">OFF-CHAIN BOOK</span>
-          </div>
-        </div>
-
         {/* Market selector */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
           {markets.map(m => {
