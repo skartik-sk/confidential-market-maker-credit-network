@@ -163,6 +163,11 @@ function ensureSeeded(): void {
     { symbol: "JUP-14D",  asset: "JUP",  maturityDays: 14, baseNoteSizeUsd: 500, baseline: 0.960, seed: 501 },
     { symbol: "BONK-7D",  asset: "BONK", maturityDays: 7,  baseNoteSizeUsd: 250, baseline: 0.945, seed: 601 },
     { symbol: "WIF-21D",  asset: "WIF",  maturityDays: 21, baseNoteSizeUsd: 500, baseline: 0.965, seed: 701 },
+    { symbol: "RAY-30D",  asset: "RAY",  maturityDays: 30, baseNoteSizeUsd: 500, baseline: 0.968, seed: 801 },
+    { symbol: "ORCA-14D", asset: "ORCA", maturityDays: 14, baseNoteSizeUsd: 500, baseline: 0.962, seed: 901 },
+    { symbol: "PYTH-45D", asset: "PYTH", maturityDays: 45, baseNoteSizeUsd: 500, baseline: 0.972, seed: 1001 },
+    { symbol: "JTO-30D",  asset: "JTO",  maturityDays: 30, baseNoteSizeUsd: 500, baseline: 0.966, seed: 1101 },
+    { symbol: "HNT-60D",  asset: "HNT",  maturityDays: 60, baseNoteSizeUsd: 500, baseline: 0.978, seed: 1201 },
   ];
 
   for (const def of marketDefs) {

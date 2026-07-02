@@ -21,10 +21,16 @@ export const ASSET_COIN_ID: Record<string, string> = {
   JUP: "jupiter-exchange-solana",
   BONK: "bonk",
   WIF: "dogwifcoin",
+  RAY: "raydium",
+  ORCA: "orca",
+  PYTH: "pyth-network",
+  HNT: "helium",
+  JTO: "jito-governance-token",
 };
 
 export const ASSET_DECIMALS: Record<string, number> = {
   SOL: 9, ETH: 8, BTC: 8, USDC: 6, JUP: 6, BONK: 5, WIF: 6,
+  RAY: 6, ORCA: 6, PYTH: 6, HNT: 6, JTO: 9,
 };
 
 /* ------------------------------------------------------------------ */
