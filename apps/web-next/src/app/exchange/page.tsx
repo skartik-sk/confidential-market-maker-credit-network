@@ -245,6 +245,22 @@ export default function ExchangePage() {
       });
       const data = await res.json();
       if (!res.ok) { addLog(`Sell failed: ${data.error}`); setBusy(false); return; }
+      // Optimistic: surface the new ask immediately, before refresh reconciles.
+      setListings((prev) => [{
+        id: data.listing.id,
+        seller: wallet.publicKey!.toBase58(),
+        noteCount, noteSizeUsd,
+        faceValueUsd: noteCount * noteSizeUsd,
+        askPriceUsd: sellAskPrice,
+        discountBps: sellDiscountBps,
+        yieldBps: sellYield,
+        daysToMaturity: currentMarket?.maturityDays ?? 30,
+        privacy,
+        creditLineId: data.listing.creditLineId,
+        market: activeMarket,
+        createdAt: Date.now(),
+        status: "active",
+      } as NoteListing, ...prev]);
       addLog(`✓ Listed ${data.listing.id} — ${sellDiscountBps / 100}% disc, ${(sellYield / 100).toFixed(1)}% APY`);
       // Mint confidential notes for the listing + record the ask ON-CHAIN (devnet).
       const listed = mintNotes(data.listing.creditLineId, noteSizeUsd, noteCount, Date.now());
@@ -278,8 +294,24 @@ export default function ExchangePage() {
         body: JSON.stringify({ listingId: target.id, buyer: wallet.publicKey.toBase58(), settlementId: env.envelope.settlementId }),
       });
       const data = await res.json();
-      if (!res.ok) { addLog(`Buy failed: ${data.error}`); setBusy(false); return; }
+      if (!res.ok) {
+        if (res.status === 409) addLog(`That ask was just filled by someone else — refreshing…`);
+        else addLog(`Buy failed: ${data.error}`);
+        setBusy(false);
+        await refresh();
+        return;
+      }
       addLog(`✓ Filled ${data.trade.id} — shielded ${data.trade.settlementId}`);
+      addLog(`✓ You acquired ${target.noteCount} ${activeMarket} notes (commitment ${data.trade.settlementId.slice(0, 12)}…)`);
+      // Optimistic: clear the filled ask and show the trade immediately.
+      setListings((prev) => prev.filter((l) => l.id !== target.id));
+      setTrades((prev) => [{
+        id: data.trade.id, listingId: target.id,
+        buyer: wallet.publicKey!.toBase58(), seller: target.seller,
+        noteCount: target.noteCount, faceValueUsd: target.faceValueUsd,
+        priceUsd: target.askPriceUsd, discountBps: target.discountBps,
+        settlementId: env.envelope.settlementId, timestamp: Date.now(),
+      } as Trade, ...prev]);
       // Mint confidential notes for what was bought + settle ON-CHAIN (devnet).
       const bought = mintNotes(target.creditLineId, target.noteSizeUsd, target.noteCount, Date.now());
       const commitment = bought[0].commitment;
