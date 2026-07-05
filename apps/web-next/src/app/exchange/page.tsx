@@ -7,6 +7,7 @@ import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js"
 import Link from "next/link";
 import { createShieldedEnvelope } from "@/lib/stealth-settlement";
 import { mintNotes } from "@/lib/note-vault";
+import { usePriceStream } from "@/lib/price-stream";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
 
 const WalletMultiButtonDynamic = dynamic(
@@ -166,6 +167,15 @@ export default function ExchangePage() {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [tf, setTf] = useState("1H");
 
+  // Live, continuous price stream (Binance → Coinbase → CoinGecko fallback).
+  const stream = usePriceStream();
+
+  // Merge live spot prices (per underlying asset) into the market rows.
+  const liveMarkets = useMemo(() => markets.map((m) => {
+    const sp = stream.prices[m.asset];
+    return sp ? { ...m, spotPriceUsd: sp.usd, spotChange24hPct: sp.change24hPct } : m;
+  }), [markets, stream]);
+
   // Sell form
   const [noteCount, setNoteCount] = useState(5);
   const [pricePct, setPricePct] = useState(97);
@@ -177,7 +187,8 @@ export default function ExchangePage() {
     setLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 30));
   }, []);
 
-  const currentMarket = markets.find(m => m.symbol === activeMarket);
+  const currentMarket = liveMarkets.find(m => m.symbol === activeMarket);
+  const activeSpot = currentMarket ? stream.prices[currentMarket.asset] : undefined;
   const noteSizeUsd = currentMarket?.baseNoteSizeUsd ?? 1000;
 
   const refresh = useCallback(async () => {
@@ -205,7 +216,7 @@ export default function ExchangePage() {
   }, [activeMarket]);
 
   useEffect(() => { refresh(); refreshCandles(); }, [refresh, refreshCandles, activeMarket]);
-  useEffect(() => { const id = setInterval(refresh, 6000); return () => clearInterval(id); }, [refresh]);
+  useEffect(() => { const id = setInterval(refresh, 12000); return () => clearInterval(id); }, [refresh]);
 
   const marketListings = useMemo(() => listings.filter(l => l.market === activeMarket), [listings, activeMarket]);
 
@@ -285,6 +296,20 @@ export default function ExchangePage() {
   const spread = book && book.asks.length && book.bids.length
     ? Math.abs(book.asks[0].priceBps - book.bids[0].priceBps) : null;
 
+  // Track the chart's right-edge candle to the live spot price.
+  const liveCandles = useMemo<Candle[]>(() => {
+    if (!candles.length) return candles;
+    const usd = activeSpot?.usd;
+    if (usd == null) return candles;
+    const next = candles.slice();
+    const last = { ...next[next.length - 1] };
+    last.close = usd;
+    last.high = Math.max(last.high, usd);
+    last.low = Math.min(last.low, usd);
+    next[next.length - 1] = last;
+    return next;
+  }, [candles, activeSpot]);
+
   return (
     <div className="min-h-screen bg-bg">
       {/* Header */}
@@ -302,6 +327,7 @@ export default function ExchangePage() {
             <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] mono text-green bg-green-soft px-2 py-1 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-green animate-glow" /> DEVNET LIVE
             </span>
+            <PriceStatusChip status={stream.status} primary={stream.primary} />
             <span suppressHydrationWarning><WalletMultiButtonDynamic /></span>
           </div>
         </div>
@@ -310,7 +336,7 @@ export default function ExchangePage() {
       <main className="max-w-[1840px] mx-auto px-5 py-4">
         {/* Market selector */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-          {markets.map(m => {
+          {liveMarkets.map(m => {
             const isActive = activeMarket === m.symbol;
             const live = m.spotPriceUsd != null;
             const up = (m.spotChange24hPct ?? 0) >= 0;
@@ -379,7 +405,7 @@ export default function ExchangePage() {
               </div>
             )}
             <div className="px-2 py-3">
-              <CandleChart candles={candles} />
+              <CandleChart candles={liveCandles} />
             </div>
             <div className="px-5 py-2 border-t border-line flex items-center justify-between">
               <p className="text-[10px] mono text-muted">Live {currentMarket?.asset ?? "asset"} spot (CoinGecko). Credit notes denominated in this asset trade at a discount shown in the order book.</p>
@@ -591,4 +617,22 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function RowKV({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
   return <div className="flex justify-between"><span className="text-muted">{label}</span><span className={valueClass}>{value}</span></div>;
+}
+
+function PriceStatusChip({ status, primary }: { status: "connecting" | "live" | "degraded" | "down"; primary: string | null }) {
+  const tone =
+    status === "live" ? { dot: "bg-green", text: "text-green", soft: "bg-green-soft" }
+    : status === "degraded" ? { dot: "bg-amber", text: "text-amber", soft: "bg-amber-soft" }
+    : { dot: "bg-muted", text: "text-muted", soft: "bg-bg" };
+  const label = status === "live" ? `LIVE · ${(primary ?? "WS").toUpperCase()}`
+    : status === "degraded" ? "FALLBACK · COINGECKO"
+    : status === "connecting" ? "CONNECTING…"
+    : "OFFLINE";
+  const glow = status === "live" || status === "degraded";
+  return (
+    <span className={`hidden sm:inline-flex items-center gap-1.5 text-[10px] mono ${tone.text} ${tone.soft} px-2 py-1 rounded-full`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${glow ? "animate-glow" : ""}`} />
+      {label}
+    </span>
+  );
 }
