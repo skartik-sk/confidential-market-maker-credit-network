@@ -145,7 +145,9 @@ export default function ExchangePage() {
     const memo = `MUTE:${params.side}:${params.market}:${params.listingId}:${params.commitment.slice(0, 16)}:${params.settlementId.slice(0, 12)}`;
     const memoIx = new TransactionInstruction({
       keys: [],
-      programId: new PublicKey("MemoSq4gqABAXKB86ZjJ4kLRvqJUa1LxeufFwvYcbLH"),
+      // Current Memo program address (the legacy `MemoSq4gq…AXKB86ZjJ…` one was
+      // deprecated/removed from devnet — it returns ProgramAccountNotFound there).
+      programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
       data: Buffer.from(memo, "utf-8"),
     });
     const tx = new Transaction().add(memoIx);
