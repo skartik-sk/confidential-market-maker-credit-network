@@ -4,11 +4,21 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import {
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
+  getAccount,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 import Link from "next/link";
 import { createShieldedEnvelope } from "@/lib/stealth-settlement";
 import { mintNotes } from "@/lib/note-vault";
 import { usePriceStream } from "@/lib/price-stream";
+import { DEVNET_USDC_MINT, DEVNET_USDC_FAUCET_URL, deriveUsdcAta, usdcToRaw } from "@/lib/usdc";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
+
+/** Current Memo program (the legacy address was removed from devnet). */
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 const WalletMultiButtonDynamic = dynamic(
   () => import("@solana/wallet-adapter-react-ui").then(m => m.WalletMultiButton),
@@ -130,8 +140,9 @@ export default function ExchangePage() {
   const [busy, setBusy] = useState(false);
 
   /** Submit a REAL on-chain trade settlement (devnet). Records only a
-   *  commitment in a Memo — the value stays confidential. Returns the tx
-   *  signature, or null if the wallet can't sign. */
+   *  commitment in a Memo — the value stays confidential. Used for SELL
+   *  (listing record). Returns the tx signature, or null if the wallet
+   *  can't sign. */
   const settleOnChain = useCallback(async (params: {
     side: "buy" | "sell";
     market: string;
@@ -140,14 +151,11 @@ export default function ExchangePage() {
     commitment: string;
   }): Promise<string | null> => {
     if (!wallet.publicKey || !wallet.signTransaction) return null;
-    // Memo contains ONLY the commitment — never the note value. This is the
-    // on-chain settlement record (off-chain order matching + on-chain settle).
+    // Memo contains ONLY the commitment — never the note value.
     const memo = `MUTE:${params.side}:${params.market}:${params.listingId}:${params.commitment.slice(0, 16)}:${params.settlementId.slice(0, 12)}`;
     const memoIx = new TransactionInstruction({
       keys: [],
-      // Current Memo program address (the legacy `MemoSq4gq…AXKB86ZjJ…` one was
-      // deprecated/removed from devnet — it returns ProgramAccountNotFound there).
-      programId: new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
+      programId: MEMO_PROGRAM_ID,
       data: Buffer.from(memo, "utf-8"),
     });
     const tx = new Transaction().add(memoIx);
@@ -157,6 +165,58 @@ export default function ExchangePage() {
     const sig = await connection.sendRawTransaction(signed.serialize());
     await connection.confirmTransaction(sig, "confirmed");
     return sig;
+  }, [wallet, connection]);
+
+  /** BUY settlement on devnet: the buyer pays the seller REAL USDC (= ask
+   *  price) via an SPL token transfer, and the commitment is recorded in a
+   *  Memo. The note VALUES stay hidden (only the commitment lands on-chain);
+   *  the payment amount is the public ask price, which is already shown in the
+   *  listing. Missing ATAs are created in the same transaction (buyer pays
+   *  rent). Returns {sig} on success, {error} on a handled failure, or null
+   *  if the wallet can't sign. */
+  const payAndSettleBuy = useCallback(async (params: {
+    seller: string;
+    amountUsd: number;
+    market: string;
+    listingId: string;
+    settlementId: string;
+    commitment: string;
+  }): Promise<{ sig: string } | { error: string } | null> => {
+    if (!wallet.publicKey || !wallet.signTransaction) return null;
+    const buyer = wallet.publicKey;
+    const sellerKey = new PublicKey(params.seller.length >= 32 ? params.seller : buyer.toBase58());
+    const buyerAta = deriveUsdcAta(buyer);
+    const sellerAta = deriveUsdcAta(sellerKey);
+    const rawAmount = usdcToRaw(params.amountUsd);
+
+    // Fail fast: verify the buyer actually has enough USDC before building the tx.
+    let buyerBal = BigInt(0);
+    try {
+      buyerBal = (await getAccount(connection, buyerAta, "confirmed", TOKEN_PROGRAM_ID)).amount;
+    } catch {
+      return { error: "You have no USDC account. Fund your wallet with devnet USDC, then retry." };
+    }
+    if (buyerBal < rawAmount) {
+      return { error: `Insufficient USDC: need ${params.amountUsd}, have ${Number(buyerBal) / 1e6}.` };
+    }
+
+    // Build instructions: create seller ATA if missing + USDC transfer + memo.
+    const ixs: TransactionInstruction[] = [];
+    const sellerAtaInfo = await connection.getAccountInfo(sellerAta, "confirmed");
+    if (!sellerAtaInfo) {
+      ixs.push(createAssociatedTokenAccountInstruction(buyer, sellerAta, sellerKey, DEVNET_USDC_MINT));
+    }
+    ixs.push(createTransferInstruction(buyerAta, sellerAta, buyer, rawAmount));
+    const memo = `MUTE:buy:${params.market}:${params.listingId}:${params.commitment.slice(0, 16)}:${params.settlementId.slice(0, 12)}`;
+    ixs.push(new TransactionInstruction({ keys: [], programId: MEMO_PROGRAM_ID, data: Buffer.from(memo, "utf-8") }));
+
+    const tx = new Transaction().add(...ixs);
+    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    tx.feePayer = buyer;
+    const signed = await wallet.signTransaction(tx);
+    const sig = await connection.sendRawTransaction(signed.serialize());
+    await connection.confirmTransaction(sig, "confirmed");
+    return { sig };
   }, [wallet, connection]);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeMarket, setActiveMarket] = useState("USDC-30D");
@@ -286,6 +346,20 @@ export default function ExchangePage() {
     setBusy(true);
     try {
       addLog(`Buying ${target.id}: ${target.noteCount} notes @ $${target.askPriceUsd.toLocaleString()}…`);
+      // Pre-check: buyer must be able to pay the ask in USDC — fail BEFORE filling.
+      try {
+        const buyerAta = deriveUsdcAta(wallet.publicKey);
+        const bal = (await getAccount(connection, buyerAta, "confirmed", TOKEN_PROGRAM_ID)).amount;
+        if (bal < usdcToRaw(target.askPriceUsd)) {
+          addLog(`Need ${target.askPriceUsd} USDC to buy (you have ${Number(bal) / 1e6}). Faucet: ${DEVNET_USDC_FAUCET_URL}`);
+          setBusy(false);
+          return;
+        }
+      } catch {
+        addLog(`No USDC account yet — fund your wallet at ${DEVNET_USDC_FAUCET_URL}, then retry.`);
+        setBusy(false);
+        return;
+      }
       const env = await createShieldedEnvelope({
         sender: wallet.publicKey,
         recipient: new PublicKey(target.seller.length >= 32 ? target.seller : wallet.publicKey),
@@ -314,17 +388,26 @@ export default function ExchangePage() {
         priceUsd: target.askPriceUsd, discountBps: target.discountBps,
         settlementId: env.envelope.settlementId, timestamp: Date.now(),
       } as Trade, ...prev]);
-      // Mint confidential notes for what was bought + settle ON-CHAIN (devnet).
+      // Mint confidential notes for what was bought + pay the seller REAL USDC
+      // on devnet, with the commitment recorded in a Memo (note value hidden).
       const bought = mintNotes(target.creditLineId, target.noteSizeUsd, target.noteCount, Date.now());
       const commitment = bought[0].commitment;
       try {
-        const sig = await settleOnChain({ side: "buy", market: activeMarket, listingId: target.id, settlementId: env.envelope.settlementId, commitment });
-        if (sig) addLog(`🔗 On-chain settle ✓ → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
-      } catch (e: any) { addLog(`On-chain settle failed: ${e.message}`); }
+        const result = await payAndSettleBuy({
+          seller: target.seller, amountUsd: target.askPriceUsd,
+          market: activeMarket, listingId: target.id,
+          settlementId: env.envelope.settlementId, commitment,
+        });
+        if (result && "error" in result) {
+          addLog(`⚠ Trade filled but payment failed: ${result.error} — retry or top up USDC.`);
+        } else if (result && "sig" in result) {
+          addLog(`💸 Paid ${target.askPriceUsd} USDC to seller on devnet → https://explorer.solana.com/tx/${result.sig}?cluster=devnet`);
+        }
+      } catch (e: any) { addLog(`On-chain USDC settle failed: ${e.message}`); }
       await refresh();
     } catch (e: any) { addLog(`Buy failed: ${e.message}`); }
     setBusy(false);
-  }, [wallet.publicKey, marketListings, addLog, refresh, settleOnChain, activeMarket]);
+  }, [wallet.publicKey, marketListings, addLog, refresh, settleOnChain, payAndSettleBuy, activeMarket]);
 
   const bestAsk = useMemo(() => [...marketListings].sort((a, b) => a.askPriceUsd - b.askPriceUsd)[0], [marketListings]);
   const spread = book && book.asks.length && book.bids.length
@@ -506,7 +589,7 @@ export default function ExchangePage() {
               </div>
             ) : side === "buy" ? (
               <>
-                <p className="text-[11px] text-muted mb-3 leading-relaxed">Fill the best ask. Settlement is shielded with AES-256-GCM — only a commitment lands on-chain.</p>
+                <p className="text-[11px] text-muted mb-3 leading-relaxed">Fill the best ask. You pay the seller <span className="text-ink">real USDC on devnet</span>; the note commitment is recorded on-chain, note values stay hidden (AES-256-GCM shielded).</p>
                 {bestAsk ? (
                   <div className="rounded-lg border border-line p-3 mb-3 mono text-xs space-y-1.5">
                     <RowKV label="Best ask" value={`$${bestAsk.askPriceUsd.toLocaleString()}`} valueClass="text-green" />
