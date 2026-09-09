@@ -28,6 +28,27 @@ export interface TxRecord {
   timestamp: number;
 }
 
+/**
+ * A confidential note owned by this wallet — stored ONLY client-side.
+ *
+ * `valueUsd` and `blinding` are the private preimage of the commitment; they
+ * never go on-chain or to any API. Losing this record loses the note.
+ */
+export interface StoredNote {
+  id: string;
+  creditLineId: string;
+  /** Private note value in USD. */
+  valueUsd: number;
+  /** Private 32-byte blinding factor (hex). */
+  blinding: string;
+  /** SHA-256(value:blinding) — safe to publish. */
+  commitment: string;
+  /** Slot (or timestamp) the note was drawn at. */
+  drawnAt: number;
+  status: "drawn" | "repaid" | "defaulted";
+  market: string;
+}
+
 export interface UserState {
   /** Pool address the user belongs to. */
   poolAddress: string;
@@ -35,6 +56,8 @@ export interface UserState {
   creditLineAddress: string;
   /** Transaction history (max 50 entries). */
   transactions: TxRecord[];
+  /** Confidential notes owned by this wallet (values stay client-side). */
+  positions: StoredNote[];
   /** Cached USDC balance in smallest units. */
   usdcBalance: number;
   /** Unix timestamp (ms) of last state update. */
@@ -182,6 +205,7 @@ export function saveUserState(
     poolAddress: state.poolAddress ?? existing?.poolAddress ?? "",
     creditLineAddress: state.creditLineAddress ?? existing?.creditLineAddress ?? "",
     transactions: state.transactions ?? existing?.transactions ?? [],
+    positions: state.positions ?? existing?.positions ?? [],
     usdcBalance: state.usdcBalance ?? existing?.usdcBalance ?? 0,
     lastUpdated: Date.now(),
   };
@@ -217,6 +241,8 @@ export function loadUserState(walletPubkey: string): UserState | null {
     if (typeof parsed.poolAddress !== "string") return null;
     if (typeof parsed.creditLineAddress !== "string") return null;
     if (!Array.isArray(parsed.transactions)) return null;
+    // Blobs saved before notes were persisted lack `positions` — normalize.
+    if (!Array.isArray(parsed.positions)) parsed.positions = [];
     if (typeof parsed.usdcBalance !== "number") return null;
     if (typeof parsed.lastUpdated !== "number") return null;
     return parsed;
@@ -254,6 +280,36 @@ export function addTransaction(
   }
 
   saveUserState(walletPubkey, { transactions });
+}
+
+/**
+ * Get the confidential notes stored for a wallet.
+ */
+export function getNotes(walletPubkey: string): StoredNote[] {
+  return loadUserState(walletPubkey)?.positions ?? [];
+}
+
+/**
+ * Append confidential notes to a wallet's stored positions.
+ *
+ * Notes with an id already present are updated in place; the rest are
+ * prepended (newest first).
+ */
+export function addNotes(walletPubkey: string, notes: StoredNote[]): void {
+  if (!isBrowser() || notes.length === 0) return;
+  const existing = getNotes(walletPubkey);
+  const byId = new Map(existing.map((n) => [n.id, n]));
+  for (const n of notes) byId.set(n.id, n);
+  saveUserState(walletPubkey, { positions: [...byId.values()] });
+}
+
+/**
+ * Replace a wallet's stored positions outright (used to sync status changes
+ * like repay/default back into storage).
+ */
+export function saveNotes(walletPubkey: string, notes: StoredNote[]): void {
+  if (!isBrowser()) return;
+  saveUserState(walletPubkey, { positions: notes });
 }
 
 /**

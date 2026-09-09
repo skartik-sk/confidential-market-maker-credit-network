@@ -10,16 +10,22 @@ interface Note { id: string; sizeUsd: number; status: string; market?: string }
 interface CreditLine {
   id: string; borrower: string; noteSizeRange: { min: number; max: number; avg: number };
   limitNotes: number; drawnNotes: number; repaidNotes: number; defaultedNotes: number;
-  totalDrawnUsd: number; totalRepaidUsd: number; outstandingUsd: number; outstandingNotes: number;
+  outstandingNotes: number;
   collateral: { asset: string; deposited: number; required: number; healthRatio: number; status: string };
   publicNotes: { id: string; status: string; market?: string }[];
+}
+/** Raw values — only ever fetched from /api/demo/credit-line/private. */
+interface PrivateView {
+  lineId: string;
   privateNotes: Note[];
+  totalDrawnUsd: number; totalRepaidUsd: number; outstandingUsd: number;
+  drawNoteValue: number; repayNoteValue: number;
 }
 interface PrivacyOption { id: string; label: string; status: "working" | "external-rail" | "native-guarded"; implementedInThisRepo: boolean; bestFor: string; whatItHides: string[] }
 interface RiskResult { input: { inventoryUsd: number; exposureUsd: number; drawdownBps: number; venueCount: number }; result: { passed: boolean; riskScoreBps: number; commitmentHash: string } }
 interface SettlementData {
-  draw: { envelope: { settlementId: string; noteDelta: number; commitment: string }; receipt: { verified: boolean; receiptHash: string }; noteValue: number };
-  repay: { envelope: { settlementId: string; noteDelta: number; commitment: string }; receipt: { verified: boolean; receiptHash: string }; noteValue: number };
+  draw: { envelope: { settlementId: string; noteDelta: number; commitment: string }; receipt: { verified: boolean; receiptHash: string } };
+  repay: { envelope: { settlementId: string; noteDelta: number; commitment: string }; receipt: { verified: boolean; receiptHash: string } };
   verified: { drawDecryptedOk: boolean; drawReceiptValid: boolean; repayReceiptValid: boolean };
 }
 interface OnChainState { live: boolean; executable?: boolean; dataLength?: number; lamports?: number; slot?: number; programId: string; deployTx?: string; explorer?: string }
@@ -42,7 +48,16 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [showPrivate, setShowPrivate] = useState(false); // DEMO ONLY: toggles public/private note view. In production, private notes are fetched from an authenticated endpoint — never sent to unauthorized clients.
+  const [showPrivate, setShowPrivate] = useState(false); // DEMO ONLY: values are fetched from the private endpoint on demand. In production that endpoint requires wallet auth — never sent to unauthorized clients.
+  const [privateView, setPrivateView] = useState<PrivateView | null>(null);
+
+  /** Fetch the private view (raw values) — DEMO ONLY, unauthenticated. */
+  const loadPrivate = useCallback(async (): Promise<PrivateView | null> => {
+    if (privateView) return privateView;
+    const pv = await get<PrivateView>("/api/demo/credit-line/private");
+    if (pv) setPrivateView(pv);
+    return pv;
+  }, [privateView]);
 
   useEffect(() => {
     (async () => {
@@ -71,9 +86,9 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
     let msg: string;
     if (id === "apply") { const d = await get<CreditLine>("/api/demo/credit-line"); msg = d ? `Approved: ${d.limitNotes} variable notes ($${d.noteSizeRange.min}–$${d.noteSizeRange.max})` : "Failed"; }
     else if (id === "collateral") { const d = await get<{ deposited: number; healthRatio: number }>("/api/demo/collateral"); msg = d ? `Collateral: $${d.deposited.toLocaleString()} USDC (health: ${d.healthRatio}x)` : "Failed"; }
-    else if (id === "draw") { msg = settlement ? `Draw: variable note ($${settlement.draw.noteValue}) → ${settlement.draw.envelope.settlementId}` : "No data"; }
+    else if (id === "draw") { const pv = settlement ? await loadPrivate() : null; msg = settlement && pv ? `Draw: variable note ($${pv.drawNoteValue}) → ${settlement.draw.envelope.settlementId}` : settlement ? `Draw: ${settlement.draw.envelope.settlementId}` : "No data"; }
     else if (id === "risk") { msg = risk ? `MPC Risk: ${risk.result.riskScoreBps}bps — ${risk.result.passed ? "PASSED" : "FAILED"}` : "No data"; }
-    else if (id === "repay") { msg = settlement ? `Repay: variable note ($${settlement.repay.noteValue}) → ${settlement.repay.envelope.settlementId}` : "No data"; }
+    else if (id === "repay") { const pv = settlement ? await loadPrivate() : null; msg = settlement && pv ? `Repay: variable note ($${pv.repayNoteValue}) → ${settlement.repay.envelope.settlementId}` : settlement ? `Repay: ${settlement.repay.envelope.settlementId}` : "No data"; }
     else { msg = settlement ? `Verified: draw=${settlement.verified.drawReceiptValid} repay=${settlement.verified.repayReceiptValid}` : "No data"; }
     setLogs(prev => [`[${Date.now() - t0}ms] ${msg}`, ...prev].slice(0, 20));
     setBusy(false);
@@ -93,7 +108,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
     { t: "Collateral", d: "Lock USDC as collateral", o: { deposited: `$${credit.collateral.deposited.toLocaleString()}`, health: `${credit.collateral.healthRatio}x` } },
     { t: "Draw Notes", d: `Draw variable-value notes ($${credit.noteSizeRange.min}–$${credit.noteSizeRange.max})`, o: { notes: `${credit.drawnNotes} drawn`, range: `$${credit.noteSizeRange.min}–$${credit.noteSizeRange.max}`, ...(settlement ? { envelope: settlement.draw.envelope.settlementId } : {}) } },
     { t: "Risk Check", d: "Encrypted MPC scoring", o: risk ? { score: `${risk.result.riskScoreBps}bps`, passed: risk.result.passed ? "YES" : "NO" } : { status: "computing" } },
-    { t: "Repay", d: "Repay with shielded envelope", o: { repaid: `${credit.repaidNotes} notes`, value: `$${credit.totalRepaidUsd.toLocaleString()}` } },
+    { t: "Repay", d: "Repay with shielded envelope", o: { repaid: `${credit.repaidNotes} notes`, value: privateView ? `$${privateView.totalRepaidUsd.toLocaleString()}` : "private" } },
     { t: "Receipt", d: "Auditor posts commitment hash", o: { hash: "receipt_a8f3b2c1", signer: "AUD-DEMO-01" } },
     { t: "Settle", d: "Vault closes the loop", o: { outstanding: `${credit.drawnNotes - credit.repaidNotes} notes`, defaulted: "0" } },
   ] : [];
@@ -219,18 +234,20 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <p className="text-muted text-sm max-w-lg mb-3">Notes range from ${credit.noteSizeRange.min} to ${credit.noteSizeRange.max}. Nobody can multiply note count by a fixed price to calculate total exposure.</p>
             <p className="text-xs text-muted mb-6">Note values are <strong className="text-red">private</strong> — only visible between you and the platform. Public view shows only note count and status.</p>
 
-            {/* Toggle: Public vs Private view */}
+            {/* Toggle: Public vs Private view (private values fetched on demand) */}
             <div className="flex gap-2 mb-6">
               <button onClick={() => setShowPrivate(false)} className={`text-xs mono px-3 py-1.5 rounded border transition-colors ${!showPrivate ? "border-red/30 bg-red-soft text-red" : "border-line text-muted hover:text-ink"}`}>
                 Public View (count only)
               </button>
-              <button onClick={() => setShowPrivate(true)} className={`text-xs mono px-3 py-1.5 rounded border transition-colors ${showPrivate ? "border-red/30 bg-red-soft text-red" : "border-line text-muted hover:text-ink"}`}>
+              <button onClick={() => { setShowPrivate(true); loadPrivate(); }} className={`text-xs mono px-3 py-1.5 rounded border transition-colors ${showPrivate ? "border-red/30 bg-red-soft text-red" : "border-line text-muted hover:text-ink"}`}>
                 Private View (values shown)
               </button>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              {(showPrivate ? credit.privateNotes : credit.publicNotes).map((n: any) => (
+              {showPrivate && !privateView ? (
+                <p className="col-span-2 md:col-span-5 text-muted text-xs mono py-8 text-center">Fetching private view…</p>
+              ) : (showPrivate ? (privateView?.privateNotes ?? []) : credit.publicNotes).map((n: any) => (
                 <div key={n.id} className={`card p-3 text-center ${n.status === "drawn" ? "border-red/20" : n.status === "repaid" ? "border-green/20" : ""}`}>
                   <p className="mono text-[10px] text-muted">{n.id}</p>
                   {showPrivate ? (
@@ -422,7 +439,9 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
                   </div>
                   {[{ label: "Draw", env: settlement.draw }, { label: "Repay", env: settlement.repay }].map(({ label, env }) => (
                     <div key={label} className="bg-bg rounded p-3 mono text-xs space-y-1">
-                      <p className="text-muted text-[10px] uppercase">{label}: Note value $<span className="text-red">{env.noteValue.toLocaleString()}</span></p>
+                      <p className="text-muted text-[10px] uppercase">{label}: Note value {privateView
+                        ? <>$<span className="text-red">{(label === "Draw" ? privateView.drawNoteValue : privateView.repayNoteValue).toLocaleString()}</span></>
+                        : <span className="text-muted">(hidden — owner view only)</span>}</p>
                       <p>ID: <span className="text-red">{env.envelope.settlementId}</span></p>
                       <p>Receipt: <span className="text-green">{env.receipt.receiptHash}</span></p>
                     </div>

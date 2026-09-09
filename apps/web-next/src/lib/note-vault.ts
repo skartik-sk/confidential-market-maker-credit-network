@@ -92,6 +92,12 @@ export function generateVariableValue(denominationUsd: number): number {
  *
  * Each note has a fresh variable value + blinding + commitment. The owner
  * keeps the (value, blinding) private; the commitment may be published.
+ *
+ * Values are rejection-sampled to be DISTINCT within a draw: with ~700
+ * possible values per denomination, even 20 naive-random notes collide
+ * ~24% of the time (birthday bound), which the confidentiality check
+ * flags. If `count` exhausts the value space, duplicates are allowed
+ * rather than looping forever.
  */
 export function mintNotes(
   creditLineId: string,
@@ -100,8 +106,13 @@ export function mintNotes(
   drawnAtSlot: number,
 ): ConfidentialNote[] {
   const notes: ConfidentialNote[] = [];
+  const usedValues = new Set<number>();
   for (let i = 0; i < count; i++) {
-    const valueUsd = generateVariableValue(denominationUsd);
+    let valueUsd = generateVariableValue(denominationUsd);
+    for (let attempt = 0; attempt < 1000 && usedValues.has(valueUsd); attempt++) {
+      valueUsd = generateVariableValue(denominationUsd);
+    }
+    usedValues.add(valueUsd);
     const blinding = secureRandomBlinding();
     notes.push({
       id: `${creditLineId.slice(0, 8)}-${drawnAtSlot}-${i}`,

@@ -21,7 +21,10 @@ export async function POST(request: NextRequest) {
 
     const result = fillListing({ listingId, buyer, settlementId });
     if ("error" in result) {
-      return NextResponse.json({ error: result.error }, { status: 409 });
+      // 404 = the listing doesn't exist (e.g. a serverless cold start wiped the
+      // in-memory store); 409 = it exists but was already filled.
+      const status = result.error.includes("not found") ? 404 : 409;
+      return NextResponse.json({ error: result.error }, { status });
     }
     return NextResponse.json({ trade: result }, { status: 201 });
   } catch (e: any) {

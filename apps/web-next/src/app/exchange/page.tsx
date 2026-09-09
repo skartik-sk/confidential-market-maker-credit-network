@@ -7,14 +7,13 @@ import { PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js"
 import {
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
-  getAccount,
-  TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import Link from "next/link";
 import { createShieldedEnvelope } from "@/lib/stealth-settlement";
 import { mintNotes } from "@/lib/note-vault";
 import { usePriceStream } from "@/lib/price-stream";
-import { DEVNET_USDC_MINT, DEVNET_USDC_FAUCET_URL, deriveUsdcAta, usdcToRaw } from "@/lib/usdc";
+import { DEVNET_USDC_MINT, DEVNET_USDC_FAUCET_URL, deriveUsdcAta, getUsdcBalance, usdcToRaw } from "@/lib/usdc";
+import { addNotes } from "@/lib/persistence";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
 
 /** Current Memo program (the legacy address was removed from devnet). */
@@ -190,11 +189,13 @@ export default function ExchangePage() {
     const rawAmount = usdcToRaw(params.amountUsd);
 
     // Fail fast: verify the buyer actually has enough USDC before building the tx.
+    // getUsdcBalance only reads as 0 when the ATA genuinely doesn't exist —
+    // RPC/network failures throw instead, so they can't masquerade as "no account".
     let buyerBal = BigInt(0);
     try {
-      buyerBal = (await getAccount(connection, buyerAta, "confirmed", TOKEN_PROGRAM_ID)).amount;
+      buyerBal = (await getUsdcBalance(connection, buyer)).balanceRaw;
     } catch {
-      return { error: "You have no USDC account. Fund your wallet with devnet USDC, then retry." };
+      return { error: "Couldn't verify your USDC balance (devnet RPC error) — try again in a moment." };
     }
     if (buyerBal < rawAmount) {
       return { error: `Insufficient USDC: need ${params.amountUsd}, have ${Number(buyerBal) / 1e6}.` };
@@ -348,15 +349,14 @@ export default function ExchangePage() {
       addLog(`Buying ${target.id}: ${target.noteCount} notes @ $${target.askPriceUsd.toLocaleString()}…`);
       // Pre-check: buyer must be able to pay the ask in USDC — fail BEFORE filling.
       try {
-        const buyerAta = deriveUsdcAta(wallet.publicKey);
-        const bal = (await getAccount(connection, buyerAta, "confirmed", TOKEN_PROGRAM_ID)).amount;
+        const bal = (await getUsdcBalance(connection, wallet.publicKey)).balanceRaw;
         if (bal < usdcToRaw(target.askPriceUsd)) {
           addLog(`Need ${target.askPriceUsd} USDC to buy (you have ${Number(bal) / 1e6}). Faucet: ${DEVNET_USDC_FAUCET_URL}`);
           setBusy(false);
           return;
         }
       } catch {
-        addLog(`No USDC account yet — fund your wallet at ${DEVNET_USDC_FAUCET_URL}, then retry.`);
+        addLog("Couldn't verify your USDC balance (devnet RPC error) — try again in a moment.");
         setBusy(false);
         return;
       }
@@ -372,6 +372,7 @@ export default function ExchangePage() {
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 409) addLog(`That ask was just filled by someone else — refreshing…`);
+        else if (res.status === 404) addLog(`That listing no longer exists — refreshing…`);
         else addLog(`Buy failed: ${data.error}`);
         setBusy(false);
         await refresh();
@@ -392,6 +393,19 @@ export default function ExchangePage() {
       // on devnet, with the commitment recorded in a Memo (note value hidden).
       const bought = mintNotes(target.creditLineId, target.noteSizeUsd, target.noteCount, Date.now());
       const commitment = bought[0].commitment;
+      // Deliver the notes to the buyer's vault: value + blinding stay
+      // client-side; they reappear on the Trade page's Positions tab.
+      addNotes(wallet.publicKey.toBase58(), bought.map(n => ({
+        id: n.id,
+        creditLineId: n.creditLineId,
+        valueUsd: n.valueUsd,
+        blinding: n.blinding,
+        commitment: n.commitment,
+        drawnAt: n.drawnAtSlot,
+        status: "drawn" as const,
+        market: activeMarket,
+      })));
+      addLog(`💾 ${bought.length} confidential note${bought.length === 1 ? "" : "s"} delivered to your vault — values hidden, visible under Trade → Positions.`);
       try {
         const result = await payAndSettleBuy({
           seller: target.seller, amountUsd: target.askPriceUsd,

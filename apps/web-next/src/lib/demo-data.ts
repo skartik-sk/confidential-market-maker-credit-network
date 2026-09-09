@@ -4,11 +4,12 @@
  * Only the user and platform can see individual note values.
  * Public view shows only NOTE COUNT, not values.
  *
- * PRODUCTION NOTE: In production, privateNotes must NEVER be sent to
- * unauthorized clients. Split into separate endpoints:
- *   GET /api/credit-line/{id}           → public data (note count, status)
- *   GET /api/credit-line/{id}/private   → requires wallet auth, returns note values
- * The settlement noteValue fields should also be gated behind auth.
+ * The public/private split below follows the production shape: the public
+ * credit-line + settlement responses carry NO values or USD totals; raw values
+ * are only in getDemoPrivateView() → GET /api/demo/credit-line/private.
+ *
+ * PRODUCTION NOTE: that private endpoint must require wallet auth
+ * (sign-in-with-Solana) and 401 unauthenticated callers.
  */
 
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
@@ -90,9 +91,6 @@ export function getDemoCreditLine() {
     status: 1,
     termsHash: "terms_demo_private_mm_credit",
     mandate,
-    totalDrawnUsd,
-    totalRepaidUsd,
-    outstandingUsd: totalDrawnUsd - totalRepaidUsd,
     collateral: {
       asset: "USDC",
       deposited: 100_000,
@@ -100,14 +98,32 @@ export function getDemoCreditLine() {
       healthRatio: 1.91,
       status: "healthy" as const,
     },
-    // PUBLIC view: only note IDs and status (no values)
+    // PUBLIC view: only note IDs and status — NO values, NO USD totals.
+    // Raw values live in getDemoPrivateView() (/api/demo/credit-line/private).
     publicNotes: NOTES.map(n => ({ id: n.id, status: n.status, market: n.market })),
-    // PRIVATE view: full note details with values (only for user/platform)
-    privateNotes: NOTES,
     receipts: [
       { receiptHash: `receipt_${hashShort("period_20_050_20_150")}`, signer: "AUD-DEMO-01", periodStartSlot: 20_050, periodEndSlot: 20_150 },
     ],
     drawHistory: drawnNotes.map(n => ({ notes: 1, market: n.market ?? "SOL-PERP", asset: "USDC", slot: n.createdAtSlot, noteId: n.id })),
+  };
+}
+
+/**
+ * PRIVATE view — raw note values and USD totals.
+ *
+ * Served only from /api/demo/credit-line/private, never from the public
+ * credit-line response. PRODUCTION: gate that endpoint behind wallet-signature
+ * auth (sign-in-with-Solana) and 401 unauthenticated callers.
+ */
+export function getDemoPrivateView() {
+  return {
+    lineId: "line_vault_01",
+    privateNotes: NOTES,
+    totalDrawnUsd,
+    totalRepaidUsd,
+    outstandingUsd: totalDrawnUsd - totalRepaidUsd,
+    drawNoteValue: drawnNotes[0]?.sizeUsd ?? 0,
+    repayNoteValue: repaidNotes[0]?.sizeUsd ?? 0,
   };
 }
 
@@ -169,10 +185,11 @@ export function getDemoSettlement() {
   const drawReceiptHash = `receipt_${hashShort(drawEnvelope.commitment + drawEnvelope.noteDelta)}`;
   const repayReceiptHash = `receipt_${hashShort(repayEnvelope.commitment + repayEnvelope.noteDelta)}`;
   return {
-    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash }, noteValue: drawNote.sizeUsd },
-    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash }, noteValue: repayNote.sizeUsd },
+    draw: { envelope: drawEnvelope, receipt: { settlementId: drawEnvelope.settlementId, commitment: drawEnvelope.commitment, verified: true, noteDelta: drawEnvelope.noteDelta, receiptHash: drawReceiptHash } },
+    repay: { envelope: repayEnvelope, receipt: { settlementId: repayEnvelope.settlementId, commitment: repayEnvelope.commitment, verified: true, noteDelta: repayEnvelope.noteDelta, receiptHash: repayReceiptHash } },
     verified: { drawDecryptedOk: true, drawReceiptValid: true, repayReceiptValid: true },
-    noteSummary: { totalNotes: NOTES.length, drawnCount: drawnNotes.length, repaidCount: repaidNotes.length, drawnValueUsd: totalDrawnUsd, repaidValueUsd: totalRepaidUsd, sizeRange: noteSizeRange },
+    // Counts + denomination range only — USD totals are in the private view.
+    noteSummary: { totalNotes: NOTES.length, drawnCount: drawnNotes.length, repaidCount: repaidNotes.length, sizeRange: noteSizeRange },
   };
 }
 

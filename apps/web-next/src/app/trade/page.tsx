@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
@@ -29,7 +29,7 @@ import {
 import {
   DEVNET_USDC_MINT,
 } from "@/lib/usdc";
-import { saveUserState, loadUserState, clearUserState, type TxRecord, addTransaction } from "@/lib/persistence";
+import { saveUserState, loadUserState, clearUserState, saveNotes, type TxRecord, type StoredNote, addTransaction } from "@/lib/persistence";
 import { mintNotes, privateExposure, publicEstimate } from "@/lib/note-vault";
 import Link from "next/link";
 
@@ -50,6 +50,9 @@ interface NotePosition {
   market: string;
   /** Real SHA-256 commitment to the variable value (safe to display). */
   commitment: string;
+  /** Private preimage fields — kept so the note stays verifiable/revealable. */
+  blinding?: string;
+  creditLineId?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -66,6 +69,34 @@ function isValidAddress(addr: string): boolean {
   } catch {
     return false;
   }
+}
+
+/* Position <-> storage mapping (storage keeps the private preimage fields). */
+
+function storedToPosition(n: StoredNote): NotePosition {
+  return {
+    id: n.id,
+    noteSizeUsd: n.valueUsd,
+    status: n.status,
+    drawnAt: n.drawnAt,
+    market: n.market,
+    commitment: n.commitment,
+    blinding: n.blinding,
+    creditLineId: n.creditLineId,
+  };
+}
+
+function positionToStored(p: NotePosition): StoredNote {
+  return {
+    id: p.id,
+    creditLineId: p.creditLineId ?? "",
+    valueUsd: p.noteSizeUsd,
+    blinding: p.blinding ?? "",
+    commitment: p.commitment,
+    drawnAt: p.drawnAt,
+    status: p.status,
+    market: p.market,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,16 +134,29 @@ export default function TradePage() {
   }, [wallet.publicKey, connection]);
 
   /* Load persisted state — validate addresses before applying */
+  const hydratedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!wallet.publicKey) return;
-    const state = loadUserState(wallet.publicKey.toBase58());
+    const pk = wallet.publicKey.toBase58();
+    const state = loadUserState(pk);
     if (state) {
       if (state.poolAddress && isValidAddress(state.poolAddress)) setPoolAddress(state.poolAddress);
       if (state.creditLineAddress && isValidAddress(state.creditLineAddress)) setLineAddress(state.creditLineAddress);
       if (state.transactions) setTxHistory(state.transactions);
-      log("Restored previous session");
+      // Confidential notes live ONLY in this storage (value + blinding never
+      // leave the browser) — restore them so a refresh doesn't lose the notes.
+      setPositions(state.positions.map(storedToPosition));
+      log(`Restored previous session — ${state.positions.length} confidential note${state.positions.length === 1 ? "" : "s"} recovered`);
     }
-  }, [wallet.publicKey]);
+    hydratedFor.current = pk;
+    // `log` is a stable useCallback([]) — listed to satisfy exhaustive-deps.
+  }, [wallet.publicKey, log]);
+
+  /* Persist notes whenever they change (draw / repay / status updates) */
+  useEffect(() => {
+    if (!wallet.publicKey || hydratedFor.current !== wallet.publicKey.toBase58()) return;
+    saveNotes(wallet.publicKey.toBase58(), positions.map(positionToStored));
+  }, [positions, wallet.publicKey]);
 
   /* Auto-save */
   useEffect(() => {
@@ -157,15 +201,24 @@ export default function TradePage() {
     }
   }, [poolAddress, connection]);
 
-  const fetchLine = useCallback(async () => {
-    if (!lineAddress || !isValidAddress(lineAddress)) return;
+  const fetchLine = useCallback(async (): Promise<ReturnType<typeof parseCreditLineAccount>> => {
+    if (!lineAddress || !isValidAddress(lineAddress)) return null;
     try {
       const info = await connection.getAccountInfo(new PublicKey(lineAddress));
-      if (info) { const l = parseCreditLineAccount(Buffer.from(info.data)); if (l) setLineData(l); }
+      if (!info) {
+        // A set-but-missing address usually means localStorage kept an old
+        // line after a devnet reset/redeploy — the user must re-run Setup.
+        log(`Credit line account not found at ${lineAddress.slice(0, 8)}… — run Setup again.`);
+        return null;
+      }
+      const l = parseCreditLineAccount(Buffer.from(info.data));
+      if (l) setLineData(l);
+      return l;
     } catch (e: any) {
       // See note above.
+      return null;
     }
-  }, [lineAddress, connection]);
+  }, [lineAddress, connection, log]);
 
   useEffect(() => { fetchPool(); }, [fetchPool]);
   useEffect(() => { fetchLine(); }, [fetchLine]);
@@ -281,9 +334,16 @@ export default function TradePage() {
       const noteSizeUsd = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
       if (drawUsd < noteSizeUsd) { log(`Minimum draw is $${noteSizeUsd.toLocaleString()} (1 note).`); setBusy(false); return; }
       const notes = Math.floor(drawUsd / noteSizeUsd);
-      // Capacity guard: remaining notes in the line
-      const remaining = (lineData?.limitNotes ?? 0) - (lineData?.drawnNotes ?? 0);
-      if (notes > remaining) { log(`Only ${remaining} notes left in limit ($${(remaining * noteSizeUsd).toLocaleString()})`); setBusy(false); return; }
+      // Capacity guard: remaining notes in the line. lineData can be null when
+      // the initial fetch failed — refetch rather than treating unknown as zero.
+      let line = lineData;
+      if (!line) line = await fetchLine();
+      if (line) {
+        const remaining = line.limitNotes - line.drawnNotes;
+        if (notes > remaining) { log(`Only ${remaining} notes left in limit ($${(remaining * noteSizeUsd).toLocaleString()})`); setBusy(false); return; }
+      } else {
+        log("Line state unavailable (devnet RPC) — skipping local capacity check; the on-chain program enforces the real limit.");
+      }
       const actualUsd = notes * noteSizeUsd;
 
       const slot = await connection.getSlot("confirmed");
@@ -307,6 +367,8 @@ export default function TradePage() {
         drawnAt: slot,
         market: ["SOL/USDC", "ETH/USDC", "BTC/USDC"][i % 3],
         commitment: n.commitment,
+        blinding: n.blinding,
+        creditLineId: n.creditLineId,
       }));
       setPositions(prev => [...newPositions, ...prev]);
 
@@ -326,7 +388,12 @@ export default function TradePage() {
     setBusy(true);
     try {
       const noteSizeUsd = lineData?.noteSizeUsd ?? poolData?.noteSizeUsd ?? 1000;
-      const outstanding = (lineData?.drawnNotes ?? 0) - (lineData?.repaidNotes ?? 0) - (lineData?.defaultedNotes ?? 0);
+      // Outstanding-notes guard needs real line state — refetch rather than
+      // treating unknown as zero ("Nothing to repay" when notes exist).
+      let line = lineData;
+      if (!line) line = await fetchLine();
+      if (!line) { log("Couldn't load the credit line state (devnet RPC) — try again in a moment."); setBusy(false); return; }
+      const outstanding = line.drawnNotes - line.repaidNotes - line.defaultedNotes;
       if (outstanding <= 0) { log("Nothing to repay — draw credit first!"); setBusy(false); return; }
       if (repayUsd < noteSizeUsd) { log(`Minimum repay is $${noteSizeUsd.toLocaleString()} (1 note).`); setBusy(false); return; }
       const notes = Math.min(Math.floor(repayUsd / noteSizeUsd), outstanding);
