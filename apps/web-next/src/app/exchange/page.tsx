@@ -42,10 +42,12 @@ interface NoteListing {
   id: string; seller: string; noteCount: number; noteSizeUsd: number; faceValueUsd: number;
   askPriceUsd: number; discountBps: number; yieldBps: number; daysToMaturity: number;
   privacy: string; creditLineId: string; market: string; createdAt: number; status: string;
+  demo?: boolean; chainSig?: string;
 }
 interface Trade {
   id: string; listingId: string; buyer: string; seller: string; noteCount: number;
   faceValueUsd: number; priceUsd: number; discountBps: number; settlementId: string; timestamp: number;
+  paymentSig?: string;
 }
 interface OrderBookLevel { priceBps: number; notes: number; total: number; faceUsd: number; }
 interface OrderBook { market: string; asks: OrderBookLevel[]; bids: OrderBookLevel[]; }
@@ -341,7 +343,15 @@ export default function ExchangePage() {
       const commitment = listed[0].commitment;
       try {
         const sig = await settleOnChain({ side: "sell", market: activeMarket, listingId: data.listing.id, settlementId: data.listing.id, commitment });
-        if (sig) addLog(`🔗 Ask recorded on-chain ✓ → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+        if (sig) {
+          addLog(`🔗 Ask recorded on-chain ✓ → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+          // Persist the chain record so the ask shows a verifiable badge.
+          fetch(`${API}/api/exchange/listings/chain`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ listingId: data.listing.id, chainSig: sig }),
+          }).catch(() => { /* badge refreshes on next poll */ });
+          setListings(prev => prev.map(l => l.id === data.listing.id ? { ...l, chainSig: sig } : l));
+        }
       } catch (e: any) { addLog(`On-chain record failed: ${e.message}`); }
       await refresh();
     } catch (e: any) { addLog(`Sell failed: ${e.message}`); }
@@ -441,6 +451,12 @@ export default function ExchangePage() {
           addLog(`⚠ Trade filled but payment failed: ${result.error} — retry or top up USDC.`);
         } else if (result && "sig" in result) {
           addLog(`💸 Paid ${target.askPriceUsd} USDC to seller on devnet → https://explorer.solana.com/tx/${result.sig}?cluster=devnet`);
+          // Attach the real payment signature to the trade record.
+          fetch(`${API}/api/exchange/trades/chain`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tradeId: data.trade.id, paymentSig: result.sig }),
+          }).catch(() => { /* badge refreshes on next poll */ });
+          setTrades(prev => prev.map(t => t.id === data.trade.id ? { ...t, paymentSig: result.sig } : t));
         }
       } catch (e: any) { addLog(`On-chain USDC settle failed: ${e.message}`); }
       await refresh();
@@ -698,11 +714,12 @@ export default function ExchangePage() {
                 <th className="px-4 py-2 text-right font-medium">Disc%</th>
                 <th className="px-4 py-2 text-right font-medium">APY</th>
                 <th className="px-4 py-2 text-left font-medium">Privacy</th>
+                <th className="px-4 py-2 text-left font-medium">Chain</th>
                 <th className="px-4 py-2 text-right font-medium"></th>
               </tr></thead>
               <tbody>
                 {marketListings.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-12 text-center text-muted">
+                  <tr><td colSpan={9} className="px-4 py-12 text-center text-muted">
                     <p className="text-sm mb-1">No active asks in this market</p>
                     <p className="text-[11px]">Be the first — list your notes in the Sell panel.</p>
                   </td></tr>
@@ -715,6 +732,15 @@ export default function ExchangePage() {
                     <td className="px-4 py-2 text-right text-red">{(l.discountBps / 100).toFixed(2)}</td>
                     <td className="px-4 py-2 text-right text-green font-medium">{(l.yieldBps / 100).toFixed(1)}</td>
                     <td className="px-4 py-2 text-[11px]"><span className="px-1.5 py-0.5 rounded bg-bg border border-line text-muted">{l.privacy}</span></td>
+                    <td className="px-4 py-2 text-[10px] mono whitespace-nowrap">
+                      {l.demo ? (
+                        <span className="px-1.5 py-0.5 rounded bg-bg border border-line text-muted" title="Synthetic demo liquidity — no on-chain record exists for this ask">demo</span>
+                      ) : l.chainSig ? (
+                        <a href={`https://explorer.solana.com/tx/${l.chainSig}?cluster=devnet`} target="_blank" rel="noreferrer" className="text-green hover:underline" title={`Recorded on devnet — verify: ${l.chainSig}`}>on-chain ✓</a>
+                      ) : (
+                        <span className="text-muted" title="Chain record pending wallet confirmation">…</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => handleBuy(l.id)} disabled={busy || !connected}
                         className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-[10px] px-2 py-1 rounded bg-green text-paper disabled:opacity-30 transition-opacity">Buy</button>
@@ -732,16 +758,21 @@ export default function ExchangePage() {
                 <span className="text-xs font-bold">Market Trades</span>
                 <span className="text-[10px] mono text-muted">{trades.length}</span>
               </div>
-              <div className="grid grid-cols-3 px-3 py-1.5 text-[9px] mono text-muted uppercase border-b border-line/50">
-                <span>Price</span><span className="text-right">Notes</span><span className="text-right">Value</span>
+              <div className="grid grid-cols-4 px-3 py-1.5 text-[9px] mono text-muted uppercase border-b border-line/50">
+                <span>Price</span><span className="text-right">Notes</span><span className="text-right">Value</span><span className="text-right">Chain</span>
               </div>
               <div className="max-h-[200px] overflow-y-auto">
                 {trades.length === 0 ? <p className="text-[11px] text-muted text-center py-6">No trades yet</p> :
                   trades.map(t => (
-                    <div key={t.id} className="grid grid-cols-3 px-3 py-1.5 text-[11px] mono border-b border-line/20">
+                    <div key={t.id} className="grid grid-cols-4 px-3 py-1.5 text-[11px] mono border-b border-line/20">
                       <span className="text-green">{(100 - t.discountBps / 100).toFixed(2)}</span>
                       <span className="text-right">{t.noteCount}</span>
                       <span className="text-right text-muted">${t.priceUsd.toLocaleString()}</span>
+                      <span className="text-right">
+                        {t.paymentSig
+                          ? <a href={`https://explorer.solana.com/tx/${t.paymentSig}?cluster=devnet`} target="_blank" rel="noreferrer" className="text-green hover:underline" title={`Real USDC payment on devnet: ${t.paymentSig}`}>paid ✓</a>
+                          : <span className="text-muted" title="USDC payment not yet recorded">—</span>}
+                      </span>
                     </div>
                   ))}
               </div>

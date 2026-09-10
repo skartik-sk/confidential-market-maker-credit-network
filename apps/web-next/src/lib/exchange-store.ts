@@ -78,6 +78,10 @@ export interface NoteListing {
   market: string;
   createdAt: number;
   status: "active" | "filled" | "cancelled";
+  /** TRUE for seeded demo liquidity — no on-chain record exists for it. */
+  demo?: boolean;
+  /** Devnet tx signature of the on-chain memo that recorded this ask. */
+  chainSig?: string;
 }
 
 /** A synthetic bid (buyer wanting notes at a discount). */
@@ -98,6 +102,8 @@ export interface Trade {
   /** Shielded settlement envelope id (from lib/stealth-settlement). */
   settlementId: string;
   timestamp: number;
+  /** Devnet tx signature of the REAL USDC payment that settled this trade. */
+  paymentSig?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -212,7 +218,7 @@ function ensureSeeded(): void {
       faceValueUsd, askPriceUsd, discountBps, yieldBps, daysToMaturity: s.daysToMaturity,
       privacy: s.privacy, creditLineId: s.creditLineId, market: s.market,
       id: `lst_${(listings.length + 1).toString().padStart(4, "0")}`,
-      createdAt: now - Math.floor(Math.random() * 600000), status: "active",
+      createdAt: now - Math.floor(Math.random() * 600000), status: "active", demo: true,
     });
   }
 }
@@ -282,6 +288,24 @@ export function cancelListing(id: string, seller: string): boolean {
   const listing = listings.find(l => l.id === id);
   if (!listing || listing.seller !== seller || listing.status !== "active") return false;
   listing.status = "cancelled";
+  return true;
+}
+
+/** Attach the devnet memo signature that recorded this ask on-chain. */
+export function recordListingChainSig(id: string, chainSig: string): boolean {
+  ensureSeeded();
+  const listing = listings.find(l => l.id === id);
+  if (!listing || listing.demo) return false;
+  listing.chainSig = chainSig;
+  return true;
+}
+
+/** Attach the devnet signature of the real USDC payment that settled a trade. */
+export function recordTradePaymentSig(id: string, paymentSig: string): boolean {
+  ensureSeeded();
+  const trade = trades.find(t => t.id === id);
+  if (!trade) return false;
+  trade.paymentSig = paymentSig;
   return true;
 }
 

@@ -253,7 +253,8 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
         <section className="border-t border-line">
           <div className="max-w-6xl mx-auto px-6 py-16">
             <p className="section-tag mb-3">Variable Notes</p>
-            <h2 className="text-3xl font-black tracking-tight mb-2">Each note is different.</h2>
+            <h2 className="text-3xl font-black tracking-tight mb-2">Each note is different. <span className="align-middle text-[10px] mono font-normal px-2 py-1 rounded bg-bg border border-line text-muted uppercase">Demo data</span></h2>
+            <p className="text-muted text-xs mono mb-3">Illustrative values — real chain state lives on <a href="/trade" className="text-red hover:underline">/trade</a> with your connected wallet.</p>
             <p className="text-muted text-sm max-w-lg mb-3">Notes range from ${credit.noteSizeRange.min} to ${credit.noteSizeRange.max}. Nobody can multiply note count by a fixed price to calculate total exposure.</p>
             <p className="text-xs text-muted mb-6">Note values are <strong className="text-red">private</strong> — only visible between you and the platform. Public view shows only note count and status.</p>
 
