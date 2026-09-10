@@ -14,13 +14,14 @@ import { mintNotes } from "@/lib/note-vault";
 import { usePriceStream } from "@/lib/price-stream";
 import { DEVNET_USDC_MINT, DEVNET_USDC_FAUCET_URL, deriveUsdcAta, getUsdcBalance, usdcToRaw } from "@/lib/usdc";
 import { addNotes } from "@/lib/persistence";
+import { proveNoteValue } from "@/lib/zk-proof";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
 
 /** Current Memo program (the legacy address was removed from devnet). */
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
-const WalletMultiButtonDynamic = dynamic(
-  () => import("@solana/wallet-adapter-react-ui").then(m => m.WalletMultiButton),
+const WalletButton = dynamic(
+  () => import("@/components/WalletButton").then(m => m.WalletButton),
   { ssr: false }
 );
 
@@ -416,6 +417,20 @@ export default function ExchangePage() {
         market: activeMarket,
       })));
       addLog(`💾 ${bought.length} confidential note${bought.length === 1 ? "" : "s"} delivered to your vault — values hidden, visible under Trade → Positions.`);
+      // ZK: prove in zero-knowledge that the values you acquired are
+      // legitimate amounts — the verifier learns nothing beyond that.
+      try {
+        const attestations = bought.map(n => proveNoteValue(n.id, n.valueUsd));
+        const zres = await fetch(`${API}/api/zk/verify`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attestations }),
+        });
+        const zdata = await zres.json();
+        if (zdata?.allValid) addLog(`🔐 ZK range proofs verified ✓ — values hidden from everyone, including the platform`);
+        else addLog(`⚠ ZK proof verification failed (${zdata?.verified ?? 0}/${zdata?.total ?? attestations.length} valid)`);
+      } catch {
+        addLog("ZK verifier unreachable — notes still delivered");
+      }
       try {
         const result = await payAndSettleBuy({
           seller: target.seller, amountUsd: target.askPriceUsd,
@@ -469,7 +484,7 @@ export default function ExchangePage() {
               <span className="w-1.5 h-1.5 rounded-full bg-green animate-glow" /> DEVNET LIVE
             </span>
             <PriceStatusChip status={stream.status} primary={stream.primary} />
-            <span suppressHydrationWarning><WalletMultiButtonDynamic /></span>
+            <span suppressHydrationWarning><WalletButton /></span>
           </div>
         </div>
       </header>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { proveNoteValue } from "@/lib/zk-proof";
+import { generateVariableValue } from "@/lib/note-vault";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -50,6 +52,27 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [showPrivate, setShowPrivate] = useState(false); // DEMO ONLY: values are fetched from the private endpoint on demand. In production that endpoint requires wallet auth — never sent to unauthorized clients.
   const [privateView, setPrivateView] = useState<PrivateView | null>(null);
+
+  // Live ZK demo: prove a hidden note value in this tab, verify on the server.
+  const [zkDemo, setZkDemo] = useState<{ status: "idle" | "busy" | "done"; verdict?: string; reveal?: number; ms?: number }>({ status: "idle" });
+  const runZkDemo = useCallback(async () => {
+    setZkDemo({ status: "busy" });
+    const t0 = Date.now();
+    const hidden = generateVariableValue(1000); // stays in THIS tab
+    const att = proveNoteValue("dashboard-demo", hidden);
+    let verdict = "verifier unreachable";
+    try {
+      const r = await fetch(`${API}/api/zk/verify`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attestations: [att] }),
+      });
+      const d = await r.json();
+      verdict = d?.allValid ? "PROVEN ✓" : "REJECTED";
+    } catch {
+      verdict = "verifier unreachable";
+    }
+    setZkDemo({ status: "done", verdict, reveal: hidden, ms: Math.max(1, Date.now() - t0) });
+  }, []);
 
   /** Fetch the private view (raw values) — DEMO ONLY, unauthenticated. */
   const loadPrivate = useCallback(async (): Promise<PrivateView | null> => {
@@ -448,6 +471,42 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
                   ))}
                 </div>
               ) : <div className="p-6 text-center text-muted text-sm">Unavailable</div>}
+            </div>
+
+            {/* LIVE ZK range proof — real cryptography, runs in your browser */}
+            <div className="bg-paper rounded-xl border border-line overflow-hidden lg:col-span-2">
+              <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+                <h3 className="font-bold text-sm">ZK Range Proof — live</h3>
+                <button
+                  onClick={runZkDemo}
+                  disabled={zkDemo.status === "busy"}
+                  className="text-xs mono px-3 py-1.5 rounded border border-line hover:border-red/40 hover:text-red transition-colors disabled:opacity-50"
+                >
+                  {zkDemo.status === "busy" ? "Proving…" : "Run live proof"}
+                </button>
+              </div>
+              <div className="p-4 mono text-xs space-y-1.5">
+                {zkDemo.status === "idle" && (
+                  <p className="text-muted">
+                    Proves a confidential note's value is a valid amount — Pedersen commitment + 16 bit OR-proofs,
+                    generated in your browser, verified by the server. The value is never revealed.
+                  </p>
+                )}
+                {zkDemo.status === "busy" && <p className="text-muted">Generating proof and sending to verifier…</p>}
+                {zkDemo.status === "done" && (
+                  <>
+                    <p>
+                      Proof: <span className={zkDemo.verdict?.startsWith("PROVEN") ? "text-green font-bold" : "text-red font-bold"}>{zkDemo.verdict}</span>
+                      <span className="text-muted"> — {zkDemo.ms}ms incl. server verification</span>
+                    </p>
+                    <p className="text-muted">Hidden value: [hidden — never left this tab]</p>
+                    <details>
+                      <summary className="cursor-pointer text-muted hover:text-ink">Reveal (owner only)</summary>
+                      <p className="text-red font-bold text-base mt-1">${zkDemo.reveal?.toLocaleString()}</p>
+                    </details>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

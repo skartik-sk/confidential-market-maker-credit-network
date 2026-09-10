@@ -30,11 +30,12 @@ import {
   DEVNET_USDC_MINT,
 } from "@/lib/usdc";
 import { saveUserState, loadUserState, clearUserState, saveNotes, type TxRecord, type StoredNote, addTransaction } from "@/lib/persistence";
+import { proveNoteValue } from "@/lib/zk-proof";
 import { mintNotes, privateExposure, publicEstimate } from "@/lib/note-vault";
 import Link from "next/link";
 
-const WalletMultiButtonDynamic = dynamic(
-  () => import("@solana/wallet-adapter-react-ui").then(m => m.WalletMultiButton),
+const WalletButton = dynamic(
+  () => import("@/components/WalletButton").then(m => m.WalletButton),
   { ssr: false }
 );
 
@@ -360,6 +361,23 @@ export default function TradePage() {
       // SHA-256 commitment. The value stays private to the owner; only the
       // commitment is safe to show. On-chain stores just the count.
       const minted = mintNotes(lineAddress, noteSizeUsd, notes, slot);
+      // ZK: prove in zero-knowledge that every note value is a legitimate
+      // amount — the platform verifies the proofs and learns nothing.
+      try {
+        const attestations = minted.map(n => proveNoteValue(n.id, n.valueUsd));
+        const zres = await fetch(`/api/zk/verify`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attestations }),
+        });
+        const zdata = await zres.json();
+        if (zdata?.allValid) {
+          log(`🔐 ZK range proofs verified ✓ (${minted.length} note${minted.length === 1 ? "" : "s"} proven valid — values stay hidden)`);
+        } else {
+          log(`⚠ ZK proof verification failed (${zdata?.verified ?? 0}/${zdata?.total ?? attestations.length} valid)`);
+        }
+      } catch {
+        log("ZK verifier unreachable — commitments stored locally");
+      }
       const newPositions: NotePosition[] = minted.map((n, i) => ({
         id: n.id,
         noteSizeUsd: n.valueUsd,
@@ -449,7 +467,7 @@ export default function TradePage() {
           </div>
           <div className="flex items-center gap-3">
             {connected && <button onClick={handleAirdrop} disabled={busy} className="text-xs text-muted hover:text-ink">Airdrop SOL</button>}
-            <WalletMultiButtonDynamic />
+            <WalletButton />
           </div>
         </div>
       </div>
@@ -458,7 +476,7 @@ export default function TradePage() {
         <div className="max-w-md mx-auto mt-32 text-center">
           <h1 className="text-3xl font-bold mb-4">Credit Trading Desk</h1>
           <p className="text-muted mb-8">Draw encrypted credit notes, manage positions, repay with shielded settlement. All on Solana devnet.</p>
-          <WalletMultiButtonDynamic />
+          <WalletButton />
         </div>
       ) : (
         <div className="max-w-[1840px] mx-auto px-7 py-6">

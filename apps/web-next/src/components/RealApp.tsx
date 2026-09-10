@@ -123,13 +123,13 @@ import {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-const WalletMultiButtonDynamic = dynamic(
-  () => import("@solana/wallet-adapter-react-ui").then(m => m.WalletMultiButton),
+const WalletButtonDynamic = dynamic(
+  () => import("@/components/WalletButton").then(m => m.WalletButton),
   { ssr: false }
 );
 
 function WalletConnectButton() {
-  return <WalletMultiButtonDynamic />;
+  return <WalletButtonDynamic />;
 }
 
 const TABS = ["interact", "usdc", "risk", "settlement", "magicblock", "token2022", "history"] as const;
