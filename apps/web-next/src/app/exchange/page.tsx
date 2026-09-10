@@ -262,7 +262,17 @@ export default function ExchangePage() {
         fetch(`${API}/api/exchange/listings?status=active`).then(r => r.json()),
         fetch(`${API}/api/exchange/trades?limit=12`).then(r => r.json()),
       ]);
-      if (mk.markets?.length) { setMarkets(mk.markets); if (!markets.length) setActiveMarket(mk.markets[0].symbol); }
+      if (mk.markets?.length) {
+        setMarkets(mk.markets);
+        if (!markets.length) {
+          // Land on the market with the most active asks so the book is never
+          // empty on first load (seeds concentrate in one market).
+          const counts = new Map<string, number>();
+          for (const l of ls.listings ?? []) counts.set(l.market, (counts.get(l.market) ?? 0) + 1);
+          const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+          setActiveMarket(best ?? mk.markets[0].symbol);
+        }
+      }
       setBook(ob);
       setListings((ls.listings ?? []).filter((l: NoteListing) => l.market === activeMarket));
       setTrades(tr.trades ?? []);
