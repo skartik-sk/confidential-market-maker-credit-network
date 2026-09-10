@@ -32,6 +32,10 @@ import {
 import { saveUserState, loadUserState, clearUserState, saveNotes, type TxRecord, type StoredNote, addTransaction } from "@/lib/persistence";
 import { proveNoteValue } from "@/lib/zk-proof";
 import { mintNotes, privateExposure, publicEstimate } from "@/lib/note-vault";
+import { accruedInterestUsd } from "@/lib/interest";
+import { sealCommitmentsOnChain, receiptHashFromCommitments } from "@/lib/commitment-registry";
+import { toast } from "@/lib/toast";
+import ConfirmModal from "@/components/ConfirmModal";
 import Link from "next/link";
 
 const WalletButton = dynamic(
@@ -46,7 +50,7 @@ const WalletButton = dynamic(
 interface NotePosition {
   id: string;
   noteSizeUsd: number;
-  status: "drawn" | "repaid" | "defaulted";
+  status: "drawn" | "listed" | "repaid" | "defaulted";
   drawnAt: number;
   market: string;
   /** Real SHA-256 commitment to the variable value (safe to display). */
@@ -100,6 +104,34 @@ function positionToStored(p: NotePosition): StoredNote {
   };
 }
 
+/** localStorage key for the latest draw's receipt hash (survives refresh). */
+const LAST_DRAW_KEY = "mute-last-draw";
+
+interface LastDrawReceipt {
+  /** Receipt hash over the drawn notes' commitments (hex). */
+  hash: string;
+  /** Whether the receipt has been sealed on-chain. */
+  sealed: boolean;
+}
+
+/** Animated placeholder shown while an on-chain account loads. */
+function SkeletonPanel({ cells, footer }: { cells: number; footer?: boolean }) {
+  return (
+    <div className="card p-4 animate-pulse" aria-hidden="true">
+      <div className="h-3.5 w-28 bg-line rounded mb-3" />
+      <div className="grid grid-cols-2 gap-2">
+        {Array.from({ length: cells }).map((_, i) => (
+          <div key={i} className="bg-bg rounded p-2">
+            <div className="h-2.5 w-12 bg-line rounded mb-1.5" />
+            <div className="h-3 w-10 bg-line rounded" />
+          </div>
+        ))}
+      </div>
+      {footer && <div className="h-3 w-44 bg-line rounded mt-2" />}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -119,6 +151,11 @@ export default function TradePage() {
   const [repayUsd, setRepayUsd] = useState(3000);
   const [showPrivate, setShowPrivate] = useState(false);
   const [tab, setTab] = useState<"trade" | "positions" | "history">("trade");
+  const [currentSlot, setCurrentSlot] = useState<number | null>(null);
+  const [lastDraw, setLastDraw] = useState<LastDrawReceipt | null>(null);
+  const [sealing, setSealing] = useState(false);
+  const [showDrawConfirm, setShowDrawConfirm] = useState(false);
+  const [showRepayConfirm, setShowRepayConfirm] = useState(false);
 
   const connected = wallet.connected && !!wallet.publicKey;
 
@@ -164,6 +201,42 @@ export default function TradePage() {
     if (!wallet.publicKey) return;
     saveUserState(wallet.publicKey.toBase58(), { poolAddress, creditLineAddress: lineAddress });
   }, [poolAddress, lineAddress, wallet.publicKey]);
+
+  /* Current slot for interest accrual — once on load, then every 30s. */
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSlot = () => {
+      connection.getSlot("confirmed")
+        .then(s => { if (!cancelled) setCurrentSlot(s); })
+        .catch(() => { /* keep the last known slot */ });
+    };
+    fetchSlot();
+    const id = setInterval(fetchSlot, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [connection]);
+
+  /* Restore the last draw's receipt so the seal button survives a refresh. */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LAST_DRAW_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<LastDrawReceipt> | null;
+      if (parsed && typeof parsed.hash === "string" && parsed.hash.length > 0) {
+        setLastDraw({ hash: parsed.hash, sealed: parsed.sealed === true });
+      }
+    } catch {
+      // Corrupt or unavailable storage — the seal button just won't show.
+    }
+  }, []);
+
+  const persistLastDraw = useCallback((entry: LastDrawReceipt | null) => {
+    try {
+      if (entry) localStorage.setItem(LAST_DRAW_KEY, JSON.stringify(entry));
+      else localStorage.removeItem(LAST_DRAW_KEY);
+    } catch {
+      // Storage unavailable — keep state-only.
+    }
+  }, []);
 
   /* Send tx helpers */
   const sendTx = useCallback(async (ix: any, type: string) => {
@@ -315,6 +388,7 @@ export default function TradePage() {
       setLineAddress(committedLine);
       log(`✓ Credit line approved ($50,000 limit) → https://explorer.solana.com/tx/${lineSig}?cluster=devnet`);
       log(`Setup complete — ready to trade!`);
+      toast("Setup approved ✓", "success");
 
       await fetchPool();
       await fetchLine();
@@ -323,6 +397,7 @@ export default function TradePage() {
       if (!committedLine) setLineAddress("");
       if (!committedPool) setPoolAddress("");
       log(`Setup failed: ${e.message}`);
+      toast(`Setup failed: ${e.message}`, "error");
     }
     setBusy(false);
   }, [wallet, connection, log, sendTxBatch, fetchPool, fetchLine]);
@@ -356,6 +431,7 @@ export default function TradePage() {
         currentSlot: slot,
       });
       const sig = await sendTx(ix, "draw");
+      toast("Draw confirmed ✓", "success");
 
       // Mint real confidential notes: each gets a variable value + blinding +
       // SHA-256 commitment. The value stays private to the owner; only the
@@ -372,11 +448,24 @@ export default function TradePage() {
         const zdata = await zres.json();
         if (zdata?.allValid) {
           log(`🔐 ZK range proofs verified ✓ (${minted.length} note${minted.length === 1 ? "" : "s"} proven valid — values stay hidden)`);
+          toast("🔐 ZK range proofs verified ✓", "success");
         } else {
           log(`⚠ ZK proof verification failed (${zdata?.verified ?? 0}/${zdata?.total ?? attestations.length} valid)`);
         }
       } catch {
         log("ZK verifier unreachable — commitments stored locally");
+      }
+      // Receipt hash over the fresh commitments — can be sealed on-chain via
+      // the button below. Any derivation failure degrades gracefully.
+      try {
+        const entry: LastDrawReceipt = {
+          hash: receiptHashFromCommitments(minted.map(n => n.commitment)),
+          sealed: false,
+        };
+        setLastDraw(entry);
+        persistLastDraw(entry);
+      } catch {
+        log("Sealing unavailable — program receipt account could not be derived");
       }
       const newPositions: NotePosition[] = minted.map((n, i) => ({
         id: n.id,
@@ -396,9 +485,12 @@ export default function TradePage() {
       log(`  🔒 real exposure $${realExposure.toLocaleString()} (private) · public estimate $${publicGuess.toLocaleString()} (on-chain)`);
       await fetchPool();
       await fetchLine();
-    } catch (e: any) { log(`Draw failed: ${e.message}`); }
+    } catch (e: any) {
+      log(`Draw failed: ${e.message}`);
+      toast(`Draw failed: ${e.message}`, "error");
+    }
     setBusy(false);
-  }, [wallet, connection, poolAddress, lineAddress, drawUsd, poolData, lineData, sendTx, log, fetchPool, fetchLine]);
+  }, [wallet, connection, poolAddress, lineAddress, drawUsd, poolData, lineData, sendTx, log, fetchPool, fetchLine, persistLastDraw]);
 
   /* Repay */
   const handleRepay = useCallback(async () => {
@@ -426,6 +518,7 @@ export default function TradePage() {
         currentSlot: slot,
       });
       const sig = await sendTx(ix, "repay");
+      toast("Repay confirmed ✓", "success");
 
       // Mark positions as repaid
       setPositions(prev => {
@@ -439,9 +532,43 @@ export default function TradePage() {
       log(`Repaid $${actualUsd.toLocaleString()} (${notes} notes, shielded) → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
       await fetchPool();
       await fetchLine();
-    } catch (e: any) { log(`Repay failed: ${e.message}`); }
+    } catch (e: any) {
+      log(`Repay failed: ${e.message}`);
+      toast(`Repay failed: ${e.message}`, "error");
+    }
     setBusy(false);
   }, [wallet, connection, poolAddress, lineAddress, repayUsd, poolData, lineData, sendTx, log, fetchPool, fetchLine]);
+
+  /* Seal the latest draw's receipt hash on-chain (best-effort, graceful). */
+  const handleSealCommitment = useCallback(async () => {
+    if (!lastDraw || !lineAddress || !wallet.publicKey || !wallet.signTransaction) return;
+    setSealing(true);
+    try {
+      // Narrowed wallet view — WalletContextState.publicKey is nullable, the
+      // registry expects a connected wallet (guarded above).
+      const sig = await sealCommitmentsOnChain(
+        connection,
+        { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
+        {
+          creditLineAddress: lineAddress,
+          receiptHashHex: lastDraw.hash,
+        },
+      );
+      if (sig) {
+        const entry: LastDrawReceipt = { ...lastDraw, sealed: true };
+        setLastDraw(entry);
+        persistLastDraw(entry);
+        toast("Commitment sealed on-chain ✓", "success");
+        log(`🔗 Receipt sealed on-chain → https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      } else {
+        log("Sealing unavailable — program receipt account could not be derived");
+      }
+    } catch {
+      log("Sealing unavailable — program receipt account could not be derived");
+    } finally {
+      setSealing(false);
+    }
+  }, [wallet, connection, lineAddress, lastDraw, log, persistLastDraw]);
 
   const drawnPositions = positions.filter(p => p.status === "drawn");
   const totalDrawnUsd = drawnPositions.reduce((s, p) => s + p.noteSizeUsd, 0);          // real private exposure
@@ -452,6 +579,23 @@ export default function TradePage() {
   // What an on-chain observer would GUESS vs the real private amount.
   const publicGuessUsd = drawnPositions.length * lineNoteSize;
 
+  // Confirm-modal figures (mirror the guards inside handleDraw / handleRepay).
+  const outstandingNotesCount = lineData
+    ? lineData.drawnNotes - lineData.repaidNotes - lineData.defaultedNotes
+    : 0;
+  const drawNoteCount = Math.floor(drawUsd / lineNoteSize);
+  const repayNoteCount = Math.min(Math.floor(repayUsd / lineNoteSize), outstandingNotesCount);
+
+  // Interest accrual — principal is the outstanding notional (notes × size).
+  const accruedInterest = lineData && currentSlot !== null
+    ? accruedInterestUsd({
+        principalUsd: outstandingNotesCount * lineData.noteSizeUsd,
+        interestBps: lineData.interestBps,
+        openedSlot: lineData.openedSlot,
+        currentSlot,
+      })
+    : null;
+
   return (
     <div className="min-h-screen bg-bg">
       {/* Header */}
@@ -461,6 +605,7 @@ export default function TradePage() {
             <Link href="/" className="text-lg font-bold shrink-0">Mute</Link>
             <div className="flex gap-0.5 sm:gap-1">
               <Link href="/" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors whitespace-nowrap">Dashboard</Link>
+              <Link href="/vault" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors whitespace-nowrap">Vault</Link>
               <span className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-medium text-red border-b-2 border-red whitespace-nowrap">Trade</span>
               <Link href="/exchange" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors whitespace-nowrap">Exchange</Link>
             </div>
@@ -536,7 +681,7 @@ export default function TradePage() {
                         <input type="number" value={drawUsd} onChange={e => setDrawUsd(Number(e.target.value))} min={1000} step={1000}
                           className="w-full bg-bg border border-line rounded px-3 py-2 text-sm mono mb-1" />
                         <p className="text-xs text-muted mb-3">≈ {Math.max(1, Math.floor(drawUsd / (poolData?.noteSizeUsd ?? 1000)))} variable notes • Note values encrypted</p>
-                        <button onClick={handleDraw} disabled={busy} className="btn-primary text-sm w-full">Draw ${drawUsd.toLocaleString()}</button>
+                        <button onClick={() => setShowDrawConfirm(true)} disabled={busy} className="btn-primary text-sm w-full">Draw ${drawUsd.toLocaleString()}</button>
                       </div>
 
                       {/* Repay */}
@@ -546,7 +691,7 @@ export default function TradePage() {
                         <input type="number" value={repayUsd} onChange={e => setRepayUsd(Number(e.target.value))} min={1000} step={1000}
                           className="w-full bg-bg border border-line rounded px-3 py-2 text-sm mono mb-1" />
                         <p className="text-xs text-muted mb-3">≈ {Math.max(1, Math.floor(repayUsd / (poolData?.noteSizeUsd ?? 1000)))} notes • Shielded settlement</p>
-                        <button onClick={handleRepay} disabled={busy} className="btn-primary text-sm w-full">Repay ${repayUsd.toLocaleString()}</button>
+                        <button onClick={() => setShowRepayConfirm(true)} disabled={busy} className="btn-primary text-sm w-full">Repay ${repayUsd.toLocaleString()}</button>
                       </div>
                     </div>
                   )}
@@ -613,6 +758,20 @@ export default function TradePage() {
 
                 {/* Right: Log + state */}
                 <div className="space-y-4">
+                  {lastDraw && (
+                    <div className="card p-4">
+                      {lastDraw.sealed ? (
+                        <p className="mono text-xs text-green">🔗 Receipt sealed on-chain · {lastDraw.hash.slice(0, 10)}…</p>
+                      ) : (
+                        <>
+                          <p className="mono text-xs text-muted mb-2">Latest draw receipt {lastDraw.hash.slice(0, 10)}… — not yet sealed</p>
+                          <button onClick={handleSealCommitment} disabled={sealing || busy} className="btn-ghost px-3 py-2 text-xs w-full">
+                            {sealing ? "Sealing…" : "🔗 Seal commitment on-chain"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="bg-paper rounded-xl border border-line overflow-hidden sticky top-20">
                     <div className="px-4 py-3 border-b border-line">
                       <span className="mono text-[10px] text-muted uppercase">Live Log</span>
@@ -632,8 +791,8 @@ export default function TradePage() {
                     </div>
                   </div>
 
-                  {/* On-chain state */}
-                  {poolData && (
+                  {/* On-chain state (skeletons while accounts load) */}
+                  {poolData ? (
                     <div className="card p-4">
                       <h4 className="font-bold text-sm mb-2">Pool: {poolStatusLabel(poolData.status)}</h4>
                       <div className="grid grid-cols-2 gap-2 mono text-xs">
@@ -643,22 +802,60 @@ export default function TradePage() {
                         <div className="bg-bg rounded p-2"><p className="text-muted text-[10px]">Outstanding</p><p>{poolData.outstandingNotes}</p></div>
                       </div>
                     </div>
-                  )}
-                  {lineData && (
+                  ) : poolAddress ? (
+                    <SkeletonPanel cells={4} />
+                  ) : null}
+                  {lineData ? (
                     <div className="card p-4">
                       <h4 className="font-bold text-sm mb-2">Line: {statusLabel(lineData.status)}</h4>
                       <div className="grid grid-cols-2 gap-2 mono text-xs">
                         <div className="bg-bg rounded p-2"><p className="text-muted text-[10px]">Limit</p><p>{showPrivate ? `$${(lineData.limitNotes * (poolData?.noteSizeUsd ?? 0)).toLocaleString()}` : `${lineData.limitNotes} notes`}</p></div>
                         <div className="bg-bg rounded p-2"><p className="text-muted text-[10px]">Drawn</p><p>{lineData.drawnNotes} notes</p></div>
                       </div>
+                      {accruedInterest !== null && (
+                        <p className="mono text-xs mt-2 text-muted">
+                          Accrued interest: <span className="text-ink font-semibold">${accruedInterest.toFixed(2)}</span> @ {lineData.interestBps} bps
+                        </p>
+                      )}
                     </div>
-                  )}
+                  ) : lineAddress ? (
+                    <SkeletonPanel cells={2} footer />
+                  ) : null}
                 </div>
               </div>
             </>
           )}
         </div>
       )}
+
+      {/* Money-moving confirmations — checkbox-gated, wired to the same busy flag */}
+      <ConfirmModal
+        open={showDrawConfirm}
+        title="Confirm draw"
+        lines={{
+          Notes: String(drawNoteCount),
+          "Note size": `$${lineNoteSize.toLocaleString()}`,
+          "Face value": `$${(drawNoteCount * lineNoteSize).toLocaleString()}`,
+          Values: "hidden — ZK-proven in range",
+        }}
+        confirmLabel="Sign draw"
+        busy={busy}
+        onConfirm={() => { setShowDrawConfirm(false); void handleDraw(); }}
+        onCancel={() => setShowDrawConfirm(false)}
+      />
+      <ConfirmModal
+        open={showRepayConfirm}
+        title="Confirm repay"
+        lines={{
+          "Notes to repay": String(repayNoteCount),
+          "Actual USD": `$${(repayNoteCount * lineNoteSize).toLocaleString()}`,
+          "Outstanding": `${outstandingNotesCount} notes`,
+        }}
+        confirmLabel="Sign repay"
+        busy={busy}
+        onConfirm={() => { setShowRepayConfirm(false); void handleRepay(); }}
+        onCancel={() => setShowRepayConfirm(false)}
+      />
     </div>
   );
 }

@@ -82,6 +82,8 @@ export interface NoteListing {
   demo?: boolean;
   /** Devnet tx signature of the on-chain memo that recorded this ask. */
   chainSig?: string;
+  /** Note ids escrowed from the seller's vault for this listing. */
+  lockedNoteIds?: string[];
 }
 
 /** A synthetic bid (buyer wanting notes at a discount). */
@@ -104,6 +106,8 @@ export interface Trade {
   timestamp: number;
   /** Devnet tx signature of the REAL USDC payment that settled this trade. */
   paymentSig?: string;
+  /** True once the payment tx's settlement memo was verified against devnet. */
+  paymentVerified?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -248,6 +252,11 @@ export function getListing(id: string): NoteListing | undefined {
   return listings.find(l => l.id === id);
 }
 
+/** Alias of getListing — explicit by-id lookup used by the trade verify API. */
+export function getListingById(id: string): NoteListing | undefined {
+  return getListing(id);
+}
+
 export interface CreateListingInput {
   seller: string;
   noteCount: number;
@@ -257,6 +266,8 @@ export interface CreateListingInput {
   privacy: PrivacyPolicyLabel;
   creditLineId: string;
   market: string;
+  /** Optional note ids escrowed from the seller's vault (client-enforced). */
+  lockedNoteIds?: string[];
 }
 
 export function createListing(input: CreateListingInput): NoteListing {
@@ -278,6 +289,7 @@ export function createListing(input: CreateListingInput): NoteListing {
     market: markets.some(m => m.symbol === input.market) ? input.market : "USDC-30D",
     createdAt: Date.now(),
     status: "active",
+    lockedNoteIds: input.lockedNoteIds,
   };
   listings.unshift(listing);
   return listing;
@@ -306,6 +318,21 @@ export function recordTradePaymentSig(id: string, paymentSig: string): boolean {
   const trade = trades.find(t => t.id === id);
   if (!trade) return false;
   trade.paymentSig = paymentSig;
+  return true;
+}
+
+/** Fetch one trade by id (used by the on-chain payment verifier). */
+export function getTradeById(id: string): Trade | undefined {
+  ensureSeeded();
+  return trades.find(t => t.id === id);
+}
+
+/** Mark a trade's USDC payment as verified against the on-chain memo. */
+export function markTradePaymentVerified(id: string): boolean {
+  ensureSeeded();
+  const trade = trades.find(t => t.id === id);
+  if (!trade) return false;
+  trade.paymentVerified = true;
   return true;
 }
 

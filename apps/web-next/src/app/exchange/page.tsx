@@ -13,8 +13,14 @@ import { createShieldedEnvelope } from "@/lib/stealth-settlement";
 import { mintNotes } from "@/lib/note-vault";
 import { usePriceStream } from "@/lib/price-stream";
 import { DEVNET_USDC_MINT, DEVNET_USDC_FAUCET_URL, deriveUsdcAta, getUsdcBalance, usdcToRaw } from "@/lib/usdc";
-import { addNotes } from "@/lib/persistence";
+import { addNotes, getNotes, saveNotes } from "@/lib/persistence";
 import { proveNoteValue } from "@/lib/zk-proof";
+import { ensureIdentity } from "@/lib/note-identity";
+import { toast, type ToastKind } from "@/lib/toast";
+import ConfirmModal from "@/components/ConfirmModal";
+import DepthChart from "@/components/DepthChart";
+import YieldCurve from "@/components/YieldCurve";
+import MarketsTable from "@/components/MarketsTable";
 import type { PrivacyPolicyLabel } from "@/lib/exchange-store";
 
 /** Current Memo program (the legacy address was removed from devnet). */
@@ -228,10 +234,20 @@ export default function ExchangePage() {
   const [marketCandles, setMarketCandles] = useState<Record<string, Candle[]>>({});
   const [book, setBook] = useState<OrderBook | null>(null);
   const [listings, setListings] = useState<NoteListing[]>([]);
+  // UNFILTERED active listings across all markets (feeds the yield curve).
+  const [allListings, setAllListings] = useState<NoteListing[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [tf, setTf] = useState("1H");
+  // Market selector view: cards (default) or sortable table.
+  const [marketView, setMarketView] = useState<"cards" | "table">("cards");
+  // Buy confirmation modal: the listing about to be filled (open when set).
+  const [confirmListing, setConfirmListing] = useState<NoteListing | null>(null);
+  // Sell-from-vault escrow: lock drawn notes into the listing contract.
+  const [escrow, setEscrow] = useState(false);
+  // Bumped whenever local vault storage mutates so getNotes re-reads.
+  const [notesVersion, setNotesVersion] = useState(0);
 
   // Live, continuous price stream (Binance → Coinbase → CoinGecko fallback).
   const stream = usePriceStream();
@@ -252,6 +268,21 @@ export default function ExchangePage() {
   const addLog = useCallback((msg: string) => {
     setLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 30));
   }, []);
+
+  /** Log to the activity feed AND surface a toast (additive — logs kept). */
+  const notify = useCallback((msg: string, kind: ToastKind = "info") => {
+    addLog(msg);
+    toast(msg, kind);
+  }, [addLog]);
+
+  // Drawn notes in the connected wallet's vault (client-side storage).
+  // `notesVersion` is referenced so the memo re-reads after in-page mutations.
+  const drawnNotes = useMemo(() => {
+    void notesVersion;
+    return wallet.publicKey
+      ? getNotes(wallet.publicKey.toBase58()).filter(n => n.status === "drawn")
+      : [];
+  }, [wallet.publicKey, notesVersion]);
 
   const currentMarket = liveMarkets.find(m => m.symbol === activeMarket);
   const activeSpot = currentMarket ? stream.prices[currentMarket.asset] : undefined;
@@ -277,7 +308,9 @@ export default function ExchangePage() {
         }
       }
       setBook(ob);
-      setListings((ls.listings ?? []).filter((l: NoteListing) => l.market === activeMarket));
+      const allActive: NoteListing[] = ls.listings ?? [];
+      setAllListings(allActive);
+      setListings(allActive.filter(l => l.market === activeMarket));
       setTrades(tr.trades ?? []);
     } catch { /* keep stale */ }
   }, [activeMarket, markets.length]);
@@ -301,6 +334,8 @@ export default function ExchangePage() {
   const sellDiscountBps = Math.round((100 - pricePct) * 100);
   const sellYield = sellAskPrice > 0 && (currentMarket?.maturityDays ?? 1) > 0
     ? Math.round(((sellFaceValue - sellAskPrice) / sellAskPrice) * (365 / (currentMarket?.maturityDays ?? 1)) * 10000) : 0;
+  // Escrow requires the vault to cover the full sell size.
+  const escrowDisabled = drawnNotes.length < noteCount;
 
   /* Sell: list notes */
   const handleSell = useCallback(async () => {
@@ -309,6 +344,10 @@ export default function ExchangePage() {
     try {
       if (pricePct > 100) { addLog("Price cannot exceed par (100%)"); setBusy(false); return; }
       addLog(`Listing ${noteCount} ${activeMarket} notes at ${pricePct}% of par…`);
+      // Escrow: optionally lock drawn notes from the client vault into this
+      // listing (escrow contract reads `lockedNoteIds` from the POST body).
+      const useEscrow = escrow && drawnNotes.length >= noteCount;
+      const lockedNoteIds = useEscrow ? drawnNotes.slice(0, noteCount).map(n => n.id) : [];
       const res = await fetch(`${API}/api/exchange/listings`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -317,10 +356,11 @@ export default function ExchangePage() {
           daysToMaturity: currentMarket?.maturityDays ?? 30, privacy,
           creditLineId: wallet.publicKey.toBase58().slice(0, 6) + "…" + wallet.publicKey.toBase58().slice(-4),
           market: activeMarket,
+          ...(lockedNoteIds.length > 0 ? { lockedNoteIds } : {}),
         }),
       });
       const data = await res.json();
-      if (!res.ok) { addLog(`Sell failed: ${data.error}`); setBusy(false); return; }
+      if (!res.ok) { notify(`Sell failed: ${data.error}`, "error"); setBusy(false); return; }
       // Optimistic: surface the new ask immediately, before refresh reconciles.
       setListings((prev) => [{
         id: data.listing.id,
@@ -337,7 +377,16 @@ export default function ExchangePage() {
         createdAt: Date.now(),
         status: "active",
       } as NoteListing, ...prev]);
-      addLog(`✓ Listed ${data.listing.id} — ${sellDiscountBps / 100}% disc, ${(sellYield / 100).toFixed(1)}% APY`);
+      notify(`✓ Listed ${data.listing.id} — ${sellDiscountBps / 100}% disc, ${(sellYield / 100).toFixed(1)}% APY`, "success");
+      // Escrow confirmed: mark the locked notes as listed in the client vault.
+      if (lockedNoteIds.length > 0) {
+        const pk = wallet.publicKey.toBase58();
+        const locked = new Set(lockedNoteIds);
+        saveNotes(pk, getNotes(pk).map(n => locked.has(n.id) ? { ...n, status: "listed" as const } : n));
+        setNotesVersion(v => v + 1);
+        setEscrow(false);
+        notify(`🔒 ${lockedNoteIds.length} drawn note${lockedNoteIds.length === 1 ? "" : "s"} escrowed from vault ✓`, "success");
+      }
       // Mint confidential notes for the listing + record the ask ON-CHAIN (devnet).
       const listed = mintNotes(data.listing.creditLineId, noteSizeUsd, noteCount, Date.now());
       const commitment = listed[0].commitment;
@@ -354,9 +403,9 @@ export default function ExchangePage() {
         }
       } catch (e: any) { addLog(`On-chain record failed: ${e.message}`); }
       await refresh();
-    } catch (e: any) { addLog(`Sell failed: ${e.message}`); }
+    } catch (e: any) { notify(`Sell failed: ${e.message}`, "error"); }
     setBusy(false);
-  }, [wallet.publicKey, noteCount, noteSizeUsd, pricePct, privacy, activeMarket, currentMarket, sellAskPrice, sellDiscountBps, sellYield, addLog, refresh, settleOnChain]);
+  }, [wallet.publicKey, noteCount, noteSizeUsd, pricePct, privacy, activeMarket, currentMarket, sellAskPrice, sellDiscountBps, sellYield, escrow, drawnNotes, addLog, notify, refresh, settleOnChain]);
 
   /* Buy: fill cheapest ask */
   const handleBuy = useCallback(async (listingId?: string) => {
@@ -364,7 +413,7 @@ export default function ExchangePage() {
     const target = listingId
       ? marketListings.find(l => l.id === listingId)
       : [...marketListings].sort((a, b) => a.askPriceUsd - b.askPriceUsd)[0];
-    if (!target) { addLog("No asks in this market"); return; }
+    if (!target) { notify("No asks in this market", "error"); return; }
     setBusy(true);
     try {
       addLog(`Buying ${target.id}: ${target.noteCount} notes @ $${target.askPriceUsd.toLocaleString()}…`);
@@ -372,12 +421,12 @@ export default function ExchangePage() {
       try {
         const bal = (await getUsdcBalance(connection, wallet.publicKey)).balanceRaw;
         if (bal < usdcToRaw(target.askPriceUsd)) {
-          addLog(`Need ${target.askPriceUsd} USDC to buy (you have ${Number(bal) / 1e6}). Faucet: ${DEVNET_USDC_FAUCET_URL}`);
+          notify(`Need ${target.askPriceUsd} USDC to buy (you have ${Number(bal) / 1e6}). Faucet: ${DEVNET_USDC_FAUCET_URL}`, "error");
           setBusy(false);
           return;
         }
       } catch {
-        addLog("Couldn't verify your USDC balance (devnet RPC error) — try again in a moment.");
+        notify("Couldn't verify your USDC balance (devnet RPC error) — try again in a moment.", "error");
         setBusy(false);
         return;
       }
@@ -385,6 +434,9 @@ export default function ExchangePage() {
         sender: wallet.publicKey,
         recipient: new PublicKey(target.seller.length >= 32 ? target.seller : wallet.publicKey),
         amount: target.askPriceUsd, noteSizeUsd: target.noteSizeUsd, creditLineId: target.creditLineId,
+        // Real X25519 ECDH: seal the settlement envelope to this browser's
+        // encryption identity so the owner can decrypt their own record.
+        recipientIdentityPubHex: ensureIdentity()?.pubHex,
       });
       const res = await fetch(`${API}/api/exchange/buy`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -392,14 +444,14 @@ export default function ExchangePage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 409) addLog(`That ask was just filled by someone else — refreshing…`);
-        else if (res.status === 404) addLog(`That listing no longer exists — refreshing…`);
-        else addLog(`Buy failed: ${data.error}`);
+        if (res.status === 409) notify("That ask was just filled by someone else — refreshing…", "error");
+        else if (res.status === 404) notify("That listing no longer exists — refreshing…", "error");
+        else notify(`Buy failed: ${data.error}`, "error");
         setBusy(false);
         await refresh();
         return;
       }
-      addLog(`✓ Filled ${data.trade.id} — shielded ${data.trade.settlementId}`);
+      notify(`✓ Filled ${data.trade.id} — shielded ${data.trade.settlementId}`, "success");
       addLog(`✓ You acquired ${target.noteCount} ${activeMarket} notes (commitment ${data.trade.settlementId.slice(0, 12)}…)`);
       // Optimistic: clear the filled ask and show the trade immediately.
       setListings((prev) => prev.filter((l) => l.id !== target.id));
@@ -426,6 +478,7 @@ export default function ExchangePage() {
         status: "drawn" as const,
         market: activeMarket,
       })));
+      setNotesVersion(v => v + 1); // vault changed — refresh escrow counts
       addLog(`💾 ${bought.length} confidential note${bought.length === 1 ? "" : "s"} delivered to your vault — values hidden, visible under Trade → Positions.`);
       // ZK: prove in zero-knowledge that the values you acquired are
       // legitimate amounts — the verifier learns nothing beyond that.
@@ -436,7 +489,10 @@ export default function ExchangePage() {
           body: JSON.stringify({ attestations }),
         });
         const zdata = await zres.json();
-        if (zdata?.allValid) addLog(`🔐 ZK range proofs verified ✓ — values hidden from everyone, including the platform`);
+        if (zdata?.allValid) {
+          addLog(`🔐 ZK range proofs verified ✓ — values hidden from everyone, including the platform`);
+          toast("🔐 ZK proofs verified ✓", "success");
+        }
         else addLog(`⚠ ZK proof verification failed (${zdata?.verified ?? 0}/${zdata?.total ?? attestations.length} valid)`);
       } catch {
         addLog("ZK verifier unreachable — notes still delivered");
@@ -449,20 +505,29 @@ export default function ExchangePage() {
         });
         if (result && "error" in result) {
           addLog(`⚠ Trade filled but payment failed: ${result.error} — retry or top up USDC.`);
+          toast(`Trade filled but payment failed: ${result.error}`, "error");
         } else if (result && "sig" in result) {
           addLog(`💸 Paid ${target.askPriceUsd} USDC to seller on devnet → https://explorer.solana.com/tx/${result.sig}?cluster=devnet`);
+          toast(`💸 Payment recorded — ${target.askPriceUsd} USDC ✓`, "success");
           // Attach the real payment signature to the trade record.
           fetch(`${API}/api/exchange/trades/chain`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tradeId: data.trade.id, paymentSig: result.sig }),
           }).catch(() => { /* badge refreshes on next poll */ });
           setTrades(prev => prev.map(t => t.id === data.trade.id ? { ...t, paymentSig: result.sig } : t));
+          // Fire-and-forget payment verification (best effort).
+          fetch(`${API}/api/exchange/trades/verify`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tradeId: data.trade.id, paymentSig: result.sig }),
+          }).then(r => (r.ok ? r.json() : null)).then(d => {
+            if (d?.verified) toast("✓ payment verified on-chain", "success");
+          }).catch(() => { /* verification is best-effort */ });
         }
       } catch (e: any) { addLog(`On-chain USDC settle failed: ${e.message}`); }
       await refresh();
-    } catch (e: any) { addLog(`Buy failed: ${e.message}`); }
+    } catch (e: any) { notify(`Buy failed: ${e.message}`, "error"); }
     setBusy(false);
-  }, [wallet.publicKey, marketListings, addLog, refresh, settleOnChain, payAndSettleBuy, activeMarket]);
+  }, [wallet.publicKey, marketListings, addLog, notify, refresh, settleOnChain, payAndSettleBuy, activeMarket]);
 
   const bestAsk = useMemo(() => [...marketListings].sort((a, b) => a.askPriceUsd - b.askPriceUsd)[0], [marketListings]);
   const spread = book && book.asks.length && book.bids.length
@@ -493,6 +558,7 @@ export default function ExchangePage() {
             <Link href="/" className="text-lg font-bold tracking-tight shrink-0">Mute</Link>
             <nav className="flex gap-0.5 sm:gap-1">
               <Link href="/" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors rounded whitespace-nowrap">Dashboard</Link>
+              <Link href="/vault" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors rounded whitespace-nowrap">Vault</Link>
               <Link href="/trade" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors rounded">Trade</Link>
               <span className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-red bg-red-soft rounded whitespace-nowrap">Exchange</span>
             </nav>
@@ -508,8 +574,10 @@ export default function ExchangePage() {
       </header>
 
       <main className="max-w-[1840px] mx-auto px-5 py-4">
-        {/* Market selector */}
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+        {/* Market selector (cards) or sortable table + view toggle */}
+        <div className="flex items-center gap-2 mb-4">
+          {marketView === "cards" && (
+          <div className="flex gap-2 overflow-x-auto pb-1 flex-1 min-w-0">
           {liveMarkets.map(m => {
             const isActive = activeMarket === m.symbol;
             const live = m.spotPriceUsd != null;
@@ -534,10 +602,26 @@ export default function ExchangePage() {
               </button>
             );
           })}
+          </div>
+          )}
+          {marketView === "table" && <span className="text-xs font-bold shrink-0">All Markets</span>}
+          <div className="flex gap-1 shrink-0 ml-auto">
+            <button onClick={() => setMarketView("cards")}
+              className={`px-2.5 py-1 text-[10px] mono rounded transition-colors ${marketView === "cards" ? "bg-ink text-paper" : "text-muted hover:text-ink"}`}>Cards</button>
+            <button onClick={() => setMarketView("table")}
+              className={`px-2.5 py-1 text-[10px] mono rounded transition-colors ${marketView === "table" ? "bg-ink text-paper" : "text-muted hover:text-ink"}`}>Table</button>
+          </div>
         </div>
+        {marketView === "table" && (
+          <section className="card overflow-hidden mb-4">
+            <MarketsTable markets={liveMarkets} activeSymbol={activeMarket} onSelect={setActiveMarket} />
+          </section>
+        )}
 
-        {/* Top row: chart + order book */}
+        {/* Top row: chart (+ yield curve) + order book (+ depth) */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 mb-4">
+          {/* Left column: chart + yield curve */}
+          <div className="space-y-4 min-w-0">
           {/* Chart panel */}
           <section className="card overflow-hidden">
             {currentMarket && (
@@ -587,6 +671,20 @@ export default function ExchangePage() {
             </div>
           </section>
 
+          {/* Yield curve: best ask APY per market across the term structure */}
+          <section className="card overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-line flex items-center justify-between">
+              <span className="text-xs font-bold">Yield Curve</span>
+              <span className="text-[10px] mono text-muted">best ask APY · x = maturity</span>
+            </div>
+            <div className="px-2 py-3">
+              <YieldCurve listings={allListings} markets={liveMarkets} />
+            </div>
+          </section>
+          </div>
+
+          {/* Right column: order book + depth chart */}
+          <div className="space-y-4">
           {/* Order book */}
           <section className="card overflow-hidden flex flex-col">
             <div className="px-3 py-2.5 border-b border-line flex items-center justify-between">
@@ -629,6 +727,18 @@ export default function ExchangePage() {
               })}
             </div>
           </section>
+
+          {/* Depth chart: cumulative asks/bids vs % of par */}
+          <section className="card overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-line flex items-center justify-between">
+              <span className="text-xs font-bold">Depth</span>
+              <span className="text-[10px] mono text-muted">% of par · cumulative notes</span>
+            </div>
+            <div className="px-2 py-3">
+              <DepthChart asks={book?.asks ?? []} bids={book?.bids ?? []} />
+            </div>
+          </section>
+          </div>
         </div>
 
         {/* Bottom row: trade panel + asks + trades/log */}
@@ -656,7 +766,7 @@ export default function ExchangePage() {
                     <RowKV label="Buyer APY" value={`${(bestAsk.yieldBps / 100).toFixed(1)}%`} valueClass="text-green" />
                   </div>
                 ) : <div className="rounded-lg border border-dashed border-line p-4 mb-3 text-center text-[11px] text-muted">No active asks in {activeMarket}</div>}
-                <button onClick={() => handleBuy()} disabled={busy || !bestAsk}
+                <button onClick={() => { if (bestAsk) setConfirmListing(bestAsk); }} disabled={busy || !bestAsk}
                   className="w-full py-2.5 rounded-lg bg-green text-paper text-sm font-bold disabled:opacity-30 hover:opacity-90 transition-opacity">
                   {busy ? "Processing…" : !bestAsk ? "No asks" : `Buy @ ${bestAsk ? (bestAsk.askPriceUsd / bestAsk.faceValueUsd * 100).toFixed(1) : ""}%`}
                 </button>
@@ -684,6 +794,21 @@ export default function ExchangePage() {
                     className="w-full bg-bg border border-line rounded-lg px-3 py-2 text-sm mono focus:outline-none focus:border-red/40">
                     {PRIVACY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
+                </div>
+                {/* Escrow drawn notes from the client vault into this listing */}
+                <div className="mb-3">
+                  <label className={`flex items-start gap-2 text-[11px] leading-snug ${escrowDisabled ? "opacity-60" : "cursor-pointer select-none"}`}>
+                    <input type="checkbox" disabled={escrowDisabled} checked={escrow && !escrowDisabled}
+                      onChange={e => setEscrow(e.target.checked)} className="mt-0.5 accent-[#dc2b28]" />
+                    <span>
+                      Escrow {drawnNotes.length} drawn note{drawnNotes.length === 1 ? "" : "s"} from my vault
+                      {escrowDisabled && (
+                        <span className="block text-[10px] text-muted mt-0.5">
+                          draw notes on <Link href="/trade" className="underline hover:text-ink">/trade</Link> first
+                        </span>
+                      )}
+                    </span>
+                  </label>
                 </div>
                 <div className="rounded-lg bg-bg p-3 mb-3 mono text-xs space-y-1.5">
                   <RowKV label="Face value" value={`$${sellFaceValue.toLocaleString()}`} />
@@ -742,7 +867,7 @@ export default function ExchangePage() {
                       )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <button onClick={() => handleBuy(l.id)} disabled={busy || !connected}
+                      <button onClick={() => setConfirmListing(l)} disabled={busy || !connected}
                         className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-[10px] px-2 py-1 rounded bg-green text-paper disabled:opacity-30 transition-opacity">Buy</button>
                     </td>
                   </tr>
@@ -786,6 +911,28 @@ export default function ExchangePage() {
             </div>
           </section>
         </div>
+
+        {/* Buy confirmation: checkbox-gated, then runs the real buy flow */}
+        <ConfirmModal
+          open={confirmListing !== null}
+          title="Fill this ask?"
+          lines={{
+            Market: confirmListing?.market ?? "—",
+            Notes: `${confirmListing?.noteCount ?? 0} × $${(confirmListing?.noteSizeUsd ?? 0).toLocaleString()}`,
+            "Face value": `$${(confirmListing?.faceValueUsd ?? 0).toLocaleString()}`,
+            "Ask price": `$${(confirmListing?.askPriceUsd ?? 0).toLocaleString()}`,
+            Discount: `${((confirmListing?.discountBps ?? 0) / 100).toFixed(2)}%`,
+            Privacy: confirmListing?.privacy ?? "—",
+          }}
+          confirmLabel="Sign & fill"
+          busy={busy}
+          onConfirm={() => {
+            const target = confirmListing;
+            if (!target) return;
+            void handleBuy(target.id).then(() => setConfirmListing(null));
+          }}
+          onCancel={() => { if (!busy) setConfirmListing(null); }}
+        />
       </main>
     </div>
   );

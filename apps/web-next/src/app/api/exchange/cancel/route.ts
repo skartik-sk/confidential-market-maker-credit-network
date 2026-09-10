@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cancelListing } from "@/lib/exchange-store";
+import { rateLimitRequest, requireAddress, cleanStr } from "@/lib/api-guard";
 
 /** POST /api/exchange/cancel — cancel one of your own active listings */
 export async function POST(request: NextRequest) {
+  if (!rateLimitRequest(request, "POST")) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
   try {
     const body = await request.json();
-    const listingId = String(body.listingId ?? "").trim();
-    const seller = String(body.seller ?? "").trim();
-    if (!listingId || seller.length < 32) {
+    const listingId = cleanStr(body.listingId, 64);
+    const seller = requireAddress(body.seller);
+    if (!listingId || !seller) {
       return NextResponse.json({ error: "listingId and valid seller required" }, { status: 400 });
     }
     const ok = cancelListing(listingId, seller);

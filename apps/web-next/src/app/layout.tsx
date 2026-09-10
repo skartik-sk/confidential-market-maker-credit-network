@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { WalletProvider } from "@/components/WalletProvider";
+import { Toaster } from "@/lib/toast";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -14,10 +15,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <head>
+        {/* Dark mode init — runs before first paint to avoid a flash.
+            Stored pref wins; otherwise fall back to the OS preference. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("mute-theme");if(t?t==="dark":window.matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.classList.add("dark")}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="min-h-screen bg-bg text-ink">
         <WalletProvider>
           {children}
+          <Toaster />
         </WalletProvider>
       </body>
     </html>

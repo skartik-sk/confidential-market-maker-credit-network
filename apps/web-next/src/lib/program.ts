@@ -69,6 +69,11 @@ export const CreditLineAccountLayout = {
   NOTE_SIZE_USD_OFFSET: 147,
   INTEREST_BPS_OFFSET: 155,
   MATURITY_SLOT_OFFSET: 165,
+  LAST_RECEIPT_SLOT_OFFSET: 173,
+};
+
+export const ReceiptAccountLayout = {
+  LEN: 122,
 };
 
 /* ------------------------------------------------------------------ */
@@ -220,6 +225,35 @@ export function createRepayTrancheIx(params: {
       { pubkey: params.borrower, isSigner: true, isWritable: false },
       { pubkey: params.pool, isSigner: false, isWritable: true },
       { pubkey: params.creditLine, isSigner: false, isWritable: true },
+    ],
+    programId: PROGRAM_ID,
+    data: data.subarray(0, offset),
+  });
+}
+
+/** Instruction 4: PostReceipt */
+export function createPostReceiptIx(params: {
+  signer: PublicKey;
+  creditLine: PublicKey;
+  receipt: PublicKey;
+  periodStartSlot: number;
+  periodEndSlot: number;
+  acceptedSlot: number;
+  receiptHash: PublicKey;
+}): TransactionInstruction {
+  const data = Buffer.alloc(1 + 8 + 8 + 8 + 32);
+  let offset = 0;
+  data.writeUInt8(4, offset); offset += 1; // tag
+  writeU64LE(data, BigInt(params.periodStartSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.periodEndSlot), offset); offset += 8;
+  writeU64LE(data, BigInt(params.acceptedSlot), offset); offset += 8;
+  data.set(params.receiptHash.toBuffer(), offset); offset += 32;
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: params.signer, isSigner: true, isWritable: false },
+      { pubkey: params.creditLine, isSigner: false, isWritable: true },
+      { pubkey: params.receipt, isSigner: false, isWritable: true },
     ],
     programId: PROGRAM_ID,
     data: data.subarray(0, offset),

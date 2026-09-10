@@ -2,6 +2,14 @@
 @import "tailwindcss";
 
 @theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Colors live in a plain (non-inline) @theme block so Tailwind utilities
+   reference var(--color-*) instead of inlining literal hex values — that is
+   what lets the html.dark overrides below restyle every utility. */
+@theme {
   --color-bg: #fbfbf9;
   --color-paper: #ffffff;
   --color-ink: #151514;
@@ -14,8 +22,22 @@
   --color-green-soft: #ecfff4;
   --color-amber: #b98319;
   --color-amber-soft: #fff8ec;
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+}
+
+html.dark {
+  --color-bg: #131210;
+  --color-paper: #1b1916;
+  --color-ink: #f0ece6;
+  --color-muted: #98908a;
+  --color-line: #2c2925;
+  --color-line-2: #3a362f;
+  --color-red: #e5484d;
+  --color-red-soft: #2b1413;
+  --color-green: #2fbe6e;
+  --color-green-soft: #0f1f17;
+  --color-amber: #c9922e;
+  --color-amber-soft: #241c0e;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -130,4 +152,27 @@ body {
   border-color: rgba(31, 173, 96, 0.28);
   background: var(--color-green-soft);
   color: #087a43;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dark mode — overrides for hardcoded light values above             */
+/* ------------------------------------------------------------------ */
+
+/* Ghost button was white-on-light */
+.dark .btn-ghost {
+  background: rgba(27, 25, 22, 0.72);
+}
+.dark .btn-ghost:hover {
+  border-color: rgba(229, 72, 77, 0.4);
+}
+
+/* Proof strip was pink-tinted paper */
+.dark .proof-strip {
+  border-color: rgba(229, 72, 77, 0.36);
+  background: rgba(43, 20, 19, 0.78);
+}
+
+/* Fixed deep-green text is unreadable on the dark green-soft */
+.dark .state-pill {
+  color: var(--color-green);
 }

@@ -45,7 +45,7 @@ export interface StoredNote {
   commitment: string;
   /** Slot (or timestamp) the note was drawn at. */
   drawnAt: number;
-  status: "drawn" | "repaid" | "defaulted";
+  status: "drawn" | "listed" | "repaid" | "defaulted";
   market: string;
 }
 

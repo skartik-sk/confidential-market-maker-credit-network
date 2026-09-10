@@ -1,12 +1,16 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getMarkets } from "@/lib/exchange-store";
 import { getSpotPrices } from "@/lib/price-feed";
+import { rateLimitRequest } from "@/lib/api-guard";
 
 /**
  * GET /api/exchange/markets — all tradeable markets, with LIVE spot prices
  * for the underlying asset merged in from the real price feed (CoinGecko).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!rateLimitRequest(request, "GET")) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
   const markets = getMarkets();
   const spot = await getSpotPrices();
   const merged = markets.map((m) => {

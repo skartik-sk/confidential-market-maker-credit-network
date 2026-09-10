@@ -1,33 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getListings, createListing, type CreateListingInput, type PrivacyPolicyLabel } from "@/lib/exchange-store";
+import { rateLimitRequest, requireAddress, cleanStr } from "@/lib/api-guard";
 
 const VALID_PRIVACY: PrivacyPolicyLabel[] = ["Public", "Umbra", "Arcium", "Umbra+Arcium", "MagicBlock"];
+const VALID_STATUS = ["active", "filled", "cancelled"] as const;
 
 /** GET /api/exchange/listings[?status=active] */
 export async function GET(request: NextRequest) {
-  const status = request.nextUrl.searchParams.get("status") as
-    | "active"
-    | "filled"
-    | "cancelled"
-    | null;
+  if (!rateLimitRequest(request, "GET")) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
+  const statusParam = cleanStr(request.nextUrl.searchParams.get("status"), 16);
+  let status: (typeof VALID_STATUS)[number] | null = null;
+  if (statusParam) {
+    if (!(VALID_STATUS as readonly string[]).includes(statusParam)) {
+      return NextResponse.json({ error: "invalid status" }, { status: 400 });
+    }
+    status = statusParam as (typeof VALID_STATUS)[number];
+  }
   return NextResponse.json({ listings: getListings(status ?? undefined) });
 }
 
 /** POST /api/exchange/listings — create a new listing */
 export async function POST(request: NextRequest) {
+  if (!rateLimitRequest(request, "POST")) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
   try {
     const body = await request.json();
-    const seller = String(body.seller ?? "").trim();
-    if (seller.length < 32) {
+    const seller = requireAddress(body.seller);
+    if (!seller) {
       return NextResponse.json({ error: "Valid seller address required" }, { status: 400 });
     }
     const noteCount = Number(body.noteCount);
     const noteSizeUsd = Number(body.noteSizeUsd);
     const askPriceUsd = Number(body.askPriceUsd);
     const daysToMaturity = Number(body.daysToMaturity);
-    const privacy = String(body.privacy) as PrivacyPolicyLabel;
-    const creditLineId = String(body.creditLineId ?? "").trim();
-    const market = String(body.market ?? "USDC-30D").trim();
+    const privacy = cleanStr(body.privacy, 16) as PrivacyPolicyLabel;
+    const creditLineId = cleanStr(body.creditLineId, 64);
+    const market = cleanStr(body.market, 32);
 
     if (!Number.isInteger(noteCount) || noteCount <= 0) {
       return NextResponse.json({ error: "noteCount must be a positive integer" }, { status: 400 });

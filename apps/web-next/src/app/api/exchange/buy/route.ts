@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fillListing } from "@/lib/exchange-store";
+import { rateLimitRequest, requireAddress, cleanStr } from "@/lib/api-guard";
 
 /** POST /api/exchange/buy — fill (buy) an active listing */
 export async function POST(request: NextRequest) {
+  if (!rateLimitRequest(request, "POST")) {
+    return NextResponse.json({ error: "rate limited" }, { status: 429 });
+  }
   try {
     const body = await request.json();
-    const listingId = String(body.listingId ?? "").trim();
-    const buyer = String(body.buyer ?? "").trim();
-    const settlementId = String(body.settlementId ?? "").trim();
+    const listingId = cleanStr(body.listingId, 64);
+    const buyer = requireAddress(body.buyer);
+    const settlementId = cleanStr(body.settlementId, 128);
 
     if (!listingId) {
       return NextResponse.json({ error: "listingId required" }, { status: 400 });
     }
-    if (buyer.length < 32) {
+    if (!buyer) {
       return NextResponse.json({ error: "Valid buyer address required" }, { status: 400 });
     }
     if (!settlementId) {

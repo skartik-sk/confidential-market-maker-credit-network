@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { proveNoteValue } from "@/lib/zk-proof";
 import { generateVariableValue } from "@/lib/note-vault";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -149,6 +150,7 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             </div>
             <span className="font-bold text-lg">Mute</span>
             {onchain?.live && <span className="text-[10px] mono px-2 py-0.5 rounded-full state-pill animate-glow">DEVNET LIVE</span>}
+            <ThemeToggle />
           </div>
           <div className="flex items-center flex-wrap justify-end gap-x-3 gap-y-1 md:gap-6 text-xs md:text-sm text-muted">
             <a href="#how" className="hidden sm:inline hover:text-ink transition-colors">How it works</a>
@@ -157,6 +159,8 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <a href="#verify" className="hidden sm:inline hover:text-ink transition-colors">Verify</a>
             <a href="/trade" className="hover:text-ink transition-colors">Trade</a>
             <a href="/exchange" className="hover:text-ink transition-colors font-medium text-red">Exchange</a>
+            <a href="/vault" className="hover:text-ink transition-colors">Vault</a>
+            <a href="/analytics" className="hover:text-ink transition-colors">Analytics</a>
           </div>
         </div>
       </nav>

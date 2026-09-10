@@ -5,11 +5,27 @@
  * shielded settlement envelopes where transfer details are hidden.
  * Only commitment hashes are visible on-chain.
  *
- * Browser-safe: uses the Web Crypto API (crypto.subtle) for X25519 ECDH and
- * AES-256-GCM, and lib/sha256 for SHA-256. No `node:crypto` dependency, so
- * this works identically in the browser and in Node/edge runtimes.
+ * Two encryption modes:
+ *  - "x25519-ecdh"  REAL ECDH: an ephemeral X25519 keypair is generated per
+ *    settlement and the AES key is HKDF(SHA-256) over the ECDH shared secret
+ *    (ephemeral private × recipient identity public). Only the holder of the
+ *    recipient's X25519 private key (see lib/note-identity.ts) can decrypt.
+ *    AES-256-GCM comes from @noble/ciphers.
+ *  - "kdf-demo"     Legacy demo fallback (kept for backward compatibility):
+ *    the AES key is SHA-256 over PUBLIC inputs, so anyone can re-derive it.
+ *    `envelope.encryption.mode` always states which mode was used so the UI
+ *    and the auditor can tell them apart.
+ *
+ * Browser-safe: uses the Web Crypto API (crypto.subtle) for the legacy path,
+ * and pure-JS @noble/curves + @noble/ciphers + @noble/hashes for the ECDH
+ * path. No `node:crypto` dependency, so this works identically in the browser
+ * and in Node/edge runtimes.
  */
 
+import { x25519 } from "@noble/curves/ed25519";
+import { gcm } from "@noble/ciphers/aes";
+import { hkdf } from "@noble/hashes/hkdf";
+import { sha256 as nobleSha256 } from "@noble/hashes/sha256";
 import { PublicKey } from "@solana/web3.js";
 import { sha256, sha256Hex, sha256Concat, randomBytes, toHex } from "./sha256";
 
@@ -38,6 +54,45 @@ export interface SettlementParams {
   noteSizeUsd: number;
   /** Credit line identifier. */
   creditLineId: string;
+  /**
+   * Recipient's X25519 identity public key (hex, 64 chars — from
+   * lib/note-identity). When provided the envelope is encrypted with REAL
+   * X25519 ECDH ("x25519-ecdh" mode); when omitted the legacy demo KDF
+   * ("kdf-demo" mode) is used.
+   */
+  recipientIdentityPubHex?: string;
+}
+
+/** Which key-agreement path produced the envelope's AES key. */
+export type EnvelopeEncryptionMode = "x25519-ecdh" | "kdf-demo";
+
+/** Metadata about how the envelope payload was encrypted. */
+export interface EnvelopeEncryption {
+  mode: EnvelopeEncryptionMode;
+  /** Key-derivation description (e.g. "hkdf-sha256/x25519" or "sha256-pubkey-kdf"). */
+  kdf: string;
+  /** Recipient identity public key (hex) — present only in x25519-ecdh mode. */
+  recipientIdentityPubHex?: string;
+}
+
+/** Decrypted settlement payload (the plaintext sealed inside the envelope). */
+export interface SettlementPayload {
+  sender: string;
+  recipient: string;
+  amount: number;
+  noteSizeUsd: number;
+  creditLineId: string;
+  timestamp: string;
+}
+
+/** Result of a receiver-side decryption attempt. */
+export interface DecryptResult {
+  /** True when authentication (GCM tag + commitment) passed. */
+  valid: boolean;
+  /** The plaintext settlement details, when valid. */
+  payload?: SettlementPayload;
+  /** Machine-readable failure reason, when invalid. */
+  error?: string;
 }
 
 export interface SettlementEnvelope {
@@ -55,6 +110,8 @@ export interface SettlementEnvelope {
   commitment: string;
   /** ISO timestamp. */
   createdAt: string;
+  /** How the payload was encrypted ("x25519-ecdh" = real ECDH). */
+  encryption?: EnvelopeEncryption;
 }
 
 export interface SettlementReceipt {
@@ -158,22 +215,51 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
 /*  Shared secret derivation                                           */
 /* ------------------------------------------------------------------ */
 
+/** HKDF salt + info (both public, non-secret — they just domain-separate). */
+const HKDF_SALT = utf8("mute-stealth-hkdf-salt-v1");
+const HKDF_INFO = utf8("mute-stealth-aes-256-gcm-v1");
+
 /**
- * Derive a 256-bit AES key from the ephemeral public key and the recipient.
+ * REAL ECDH key derivation ("x25519-ecdh" mode).
  *
- * Demo-grade KDF: AES_KEY = SHA-256(domain || ephemeralPub || recipient).
- * Both `createShieldedEnvelope` and `decryptShieldedEnvelope` can re-derive
- * this from the envelope's `ephemeralPubkey` field and the recipient key.
- * (Production Umbra uses true X25519 ECDH via the Ed→X birational map on the
- * recipient's Solana key; that conversion isn't available in the Web Crypto
- * API, so we use a deterministic hash-based KDF that still produces a real
- * 256-bit key and real AES-256-GCM ciphertext.)
+ * shared = X25519(ephemeralPrivate, recipientIdentityPublic)
+ * aesKey = HKDF-SHA256(shared, salt, info, 32)
+ *
+ * Only the holder of the recipient identity private key can re-derive
+ * `shared` from the envelope (they compute X25519(identityPrivate,
+ * ephemeralPublic) which yields the same secret). Every input visible in the
+ * envelope is public — the private ephemeral key is discarded after
+ * encryption and never stored.
+ */
+function deriveEcdhAesKey(ephemeralPrivate: Uint8Array, recipientIdentityPublic: Uint8Array): Uint8Array {
+  const shared = x25519.scalarMult(ephemeralPrivate, recipientIdentityPublic);
+  return hkdf(nobleSha256, shared, HKDF_SALT, HKDF_INFO, 32);
+}
+
+/** Receiver-side mirror of {@link deriveEcdhAesKey} (identity priv × ephemeral pub). */
+function deriveEcdhAesKeyReceiver(identityPrivate: Uint8Array, ephemeralPublic: Uint8Array): Uint8Array {
+  const shared = x25519.scalarMult(identityPrivate, ephemeralPublic);
+  return hkdf(nobleSha256, shared, HKDF_SALT, HKDF_INFO, 32);
+}
+
+/**
+ * Legacy demo-grade KDF ("kdf-demo" mode) — KEPT ONLY for backward
+ * compatibility when no recipient identity is provided.
+ *
+ * AES_KEY = SHA-256(domain || ephemeralPub || recipientPub) — every input is
+ * PUBLIC, so anyone can re-derive this key and decrypt the envelope. Real
+ * deployments should always pass `recipientIdentityPubHex`.
  */
 function deriveSharedSecretKey(
   ephemeralPublic: Uint8Array,
   recipientKey: Uint8Array,
 ): Uint8Array {
   return sha256(concatBytes(utf8("credit-vault-aes-key-v1"), ephemeralPublic, recipientKey));
+}
+
+/** Build the AES-256-GCM AAD binding the envelope metadata to the ciphertext. */
+function envelopeAad(settlementId: string, commitment: string, createdAt: string): Uint8Array {
+  return utf8(JSON.stringify({ settlementId, commitment, createdAt }));
 }
 
 /* ------------------------------------------------------------------ */
