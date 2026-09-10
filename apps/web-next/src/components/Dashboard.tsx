@@ -150,11 +150,11 @@ export function Dashboard({ realAppSlot }: { realAppSlot?: React.ReactNode }) {
             <span className="font-bold text-lg">Mute</span>
             {onchain?.live && <span className="text-[10px] mono px-2 py-0.5 rounded-full state-pill animate-glow">DEVNET LIVE</span>}
           </div>
-          <div className="flex items-center gap-6 text-sm text-muted">
-            <a href="#how" className="hover:text-ink transition-colors">How it works</a>
-            <a href="#execute" className="hover:text-ink transition-colors">Execute</a>
-            <a href="#privacy" className="hover:text-ink transition-colors">Privacy</a>
-            <a href="#verify" className="hover:text-ink transition-colors">Verify</a>
+          <div className="flex items-center flex-wrap justify-end gap-x-3 gap-y-1 md:gap-6 text-xs md:text-sm text-muted">
+            <a href="#how" className="hidden sm:inline hover:text-ink transition-colors">How it works</a>
+            <a href="#execute" className="hidden sm:inline hover:text-ink transition-colors">Execute</a>
+            <a href="#privacy" className="hidden sm:inline hover:text-ink transition-colors">Privacy</a>
+            <a href="#verify" className="hidden sm:inline hover:text-ink transition-colors">Verify</a>
             <a href="/trade" className="hover:text-ink transition-colors">Trade</a>
             <a href="/exchange" className="hover:text-ink transition-colors font-medium text-red">Exchange</a>
           </div>

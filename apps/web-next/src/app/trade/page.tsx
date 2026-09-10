@@ -456,17 +456,17 @@ export default function TradePage() {
     <div className="min-h-screen bg-bg">
       {/* Header */}
       <div className="border-b border-line">
-        <div className="max-w-[1840px] mx-auto px-7 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="text-lg font-bold">Mute</Link>
-            <div className="flex gap-1">
-              <Link href="/" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors">Dashboard</Link>
-              <span className="px-3 py-1.5 text-xs font-medium text-red border-b-2 border-red">Trade</span>
-              <Link href="/exchange" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors">Exchange</Link>
+        <div className="max-w-[1840px] mx-auto px-3 sm:px-7 py-4 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+            <Link href="/" className="text-lg font-bold shrink-0">Mute</Link>
+            <div className="flex gap-0.5 sm:gap-1">
+              <Link href="/" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors whitespace-nowrap">Dashboard</Link>
+              <span className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-medium text-red border-b-2 border-red whitespace-nowrap">Trade</span>
+              <Link href="/exchange" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors whitespace-nowrap">Exchange</Link>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {connected && <button onClick={handleAirdrop} disabled={busy} className="text-xs text-muted hover:text-ink">Airdrop SOL</button>}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {connected && <button onClick={handleAirdrop} disabled={busy} className="hidden sm:inline text-xs text-muted hover:text-ink">Airdrop SOL</button>}
             <WalletButton />
           </div>
         </div>

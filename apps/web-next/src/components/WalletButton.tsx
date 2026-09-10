@@ -80,7 +80,7 @@ export function WalletButton() {
         <button
           onClick={() => setOpen(o => !o)}
           disabled={connecting}
-          className="h-10 px-5 rounded-lg bg-ink text-paper text-sm font-bold hover:bg-red transition-colors disabled:opacity-60"
+          className="h-10 px-3 sm:px-5 rounded-lg bg-ink text-paper text-xs sm:text-sm font-bold whitespace-nowrap hover:bg-red transition-colors disabled:opacity-60"
         >
           {connecting ? "Connecting…" : "Connect Wallet"}
         </button>

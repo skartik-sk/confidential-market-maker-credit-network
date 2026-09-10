@@ -452,7 +452,9 @@ export default function ExchangePage() {
   const spread = book && book.asks.length && book.bids.length
     ? Math.abs(book.asks[0].priceBps - book.bids[0].priceBps) : null;
 
-  // Track the chart's right-edge candle to the live spot price.
+  // Track the chart's right-edge candle to the live spot price. Candles are
+  // the underlying asset's REAL market history (CoinGecko), so the raw live
+  // spot is the correct scale — this makes the last candle tick live.
   const liveCandles = useMemo<Candle[]>(() => {
     if (!candles.length) return candles;
     const usd = activeSpot?.usd;
@@ -470,20 +472,20 @@ export default function ExchangePage() {
     <div className="min-h-screen bg-bg">
       {/* Header */}
       <header className="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-20">
-        <div className="max-w-[1840px] mx-auto px-5 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/" className="text-lg font-bold tracking-tight">Mute</Link>
-            <nav className="flex gap-1">
-              <Link href="/" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors rounded">Dashboard</Link>
-              <Link href="/trade" className="px-3 py-1.5 text-xs text-muted hover:text-ink transition-colors rounded">Trade</Link>
-              <span className="px-3 py-1.5 text-xs font-semibold text-red bg-red-soft rounded">Exchange</span>
+        <div className="max-w-[1840px] mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+            <Link href="/" className="text-lg font-bold tracking-tight shrink-0">Mute</Link>
+            <nav className="flex gap-0.5 sm:gap-1">
+              <Link href="/" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors rounded whitespace-nowrap">Dashboard</Link>
+              <Link href="/trade" className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs text-muted hover:text-ink transition-colors rounded">Trade</Link>
+              <span className="px-2 sm:px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-red bg-red-soft rounded whitespace-nowrap">Exchange</span>
             </nav>
           </div>
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] mono text-green bg-green-soft px-2 py-1 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-green animate-glow" /> DEVNET LIVE
             </span>
-            <PriceStatusChip status={stream.status} primary={stream.primary} />
+            <span className="hidden sm:inline-flex"><PriceStatusChip status={stream.status} primary={stream.primary} /></span>
             <span suppressHydrationWarning><WalletButton /></span>
           </div>
         </div>
@@ -706,7 +708,7 @@ export default function ExchangePage() {
                   </td></tr>
                 ) : [...marketListings].sort((a, b) => a.askPriceUsd - b.askPriceUsd).map(l => (
                   <tr key={l.id} className="border-b border-line/40 hover:bg-paper transition-colors group">
-                    <td className="px-4 py-2 text-muted">{l.seller.slice(0, 6)}…{l.seller.slice(-4)}</td>
+                    <td className="px-4 py-2 text-muted whitespace-nowrap">{l.seller.length <= 16 ? l.seller : `${l.seller.slice(0, 6)}…${l.seller.slice(-4)}`}</td>
                     <td className="px-4 py-2 text-right">{l.noteCount}</td>
                     <td className="px-4 py-2 text-right text-muted">${l.faceValueUsd.toLocaleString()}</td>
                     <td className="px-4 py-2 text-right font-semibold text-green">${l.askPriceUsd.toLocaleString()}</td>
@@ -715,7 +717,7 @@ export default function ExchangePage() {
                     <td className="px-4 py-2 text-[11px]"><span className="px-1.5 py-0.5 rounded bg-bg border border-line text-muted">{l.privacy}</span></td>
                     <td className="px-4 py-2 text-right">
                       <button onClick={() => handleBuy(l.id)} disabled={busy || !connected}
-                        className="opacity-0 group-hover:opacity-100 text-[10px] px-2 py-1 rounded bg-green text-paper disabled:opacity-30 transition-opacity">Buy</button>
+                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-[10px] px-2 py-1 rounded bg-green text-paper disabled:opacity-30 transition-opacity">Buy</button>
                     </td>
                   </tr>
                 ))}
